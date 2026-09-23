@@ -1,7 +1,12 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from backend.plot.router import router as plot_router
+
 app = FastAPI(title="robot-calibration API")
+
+# グラフ描画 API（/plot/...）
+app.include_router(plot_router)
 
 
 # アイテム登録で受け取るデータの形式
