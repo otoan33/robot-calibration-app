@@ -28,11 +28,14 @@ robot-calibration-app/
 │   └── Dockerfile
 ├── desktop/
 │   └── launcher.py           # Windows exe 用: 描画 API・解析 API・frontend をまとめて起動
-└── windows/
-    ├── build.sh              # Windows 版ビルドスクリプト
-    ├── build-in-container.sh # ビルド用コンテナ内で実行される処理
-    ├── Dockerfile            # ビルド用イメージ（Wine + Windows 版 Python + NSIS）
-    └── installer.nsi         # インストーラ定義
+├── windows/
+│   ├── build.sh              # Windows 版ビルドスクリプト
+│   ├── build-in-container.sh # ビルド用コンテナ内で実行される処理
+│   ├── Dockerfile            # ビルド用イメージ（Wine + Windows 版 Python + NSIS）
+│   └── installer.nsi         # インストーラ定義
+├── docs/manual/              # 使い方マニュアル（Marp のスライドと書き出した HTML、スクリーンショット）
+└── scripts/
+    └── make_manual.py        # マニュアル用のスクリーンショットをダミーデータで撮る
 ```
 
 `backend/` と `frontend/` はそれぞれ Python パッケージ（`backend.draw`、`backend.analysis`、`frontend.main`）として import できる。Docker でも exe でも同じ import パスで動かしている。
@@ -145,6 +148,24 @@ robot-calibration.exe --frontend-port 9080 --backend-port 9000 --analysis-port 9
 ### 注意
 
 - 署名していないため、初回の実行時に SmartScreen の警告が出ることがある。「詳細情報 → 実行」で起動できる。
+
+## 使い方マニュアル
+
+`docs/manual/manual.md`（Marp 形式のスライド）と、書き出した `docs/manual/manual.html` がある。スクリーンショット（`docs/manual/img/`）は `scripts/make_manual.py` がダミーデータで画面を操作して撮る。画面を改修したら、アプリを起動した状態でプロジェクト直下から次を実行して撮り直す。
+
+```bash
+docker compose up -d --build
+# スクリーンショットを撮る（Playwright の公式イメージ内で実行する）
+docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work \
+    mcr.microsoft.com/playwright/python:v1.63.0-noble \
+    sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && python scripts/make_manual.py"
+# スライドを HTML に書き出す
+docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli docs/manual/manual.md -o docs/manual/manual.html
+```
+
+- ダミーデータの一部（キネマ補正・ツール補正）は解析 API のモデルで作るため、実行すると解析 API が保持しているモデルは置き換わる
+- 画面の部品やボタン名を変えた場合は、`scripts/make_manual.py` の操作手順とスライドの説明文も合わせて直す
+- HTML は画像を `img/` から読むため、配布するときは `docs/manual/` フォルダごと渡す
 
 ## 開発（Dev Container）
 
