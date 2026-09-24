@@ -1,0 +1,277 @@
+"""使い方マニュアル（docs/manual/manual.md）用のスクリーンショットを、ダミーデータで操作しながら docs/manual/img/ に撮る。
+
+アプリの改修後に画面を撮り直すためのスクリプト。アプリを起動した状態で、プロジェクト直下から実行する。
+ホストに Chromium の依存ライブラリが無くても動くよう、Playwright の公式イメージ内で実行する。
+
+    docker compose up -d --build
+    docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work \\
+        mcr.microsoft.com/playwright/python:v1.63.0-noble \\
+        sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && python scripts/make_manual.py"
+    docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli docs/manual/manual.md -o docs/manual/manual.html
+"""
+import argparse
+import csv
+import json
+import math
+import random
+import re
+import tempfile
+import urllib.request
+from pathlib import Path
+
+from playwright.sync_api import Locator, Page, sync_playwright
+
+OUT = Path(__file__).resolve().parent.parent / "docs" / "manual" / "img"
+rng = random.Random(0)  # 撮り直しても同じ画像になるよう乱数を固定する
+
+
+def api(url: str, path: str, body: dict | None = None):
+    request = urllib.request.Request(url + path, json.dumps(body or {}).encode(), {"content-type": "application/json"})
+    return json.load(urllib.request.urlopen(request))
+
+
+def write_csv(path: Path, header: list[str], rows: list[list], pre: tuple = (), post: tuple = ()) -> Path:
+    """pre / post は、実機の CSV にあるヘッダー前の情報行と末尾の集計行を再現するための行。"""
+    with open(path, "w", newline="", encoding="shift_jis") as f:
+        writer = csv.writer(f)
+        writer.writerows([*pre, header, *[[round(v, 6) if isinstance(v, float) else v for v in row] for row in rows], *post])
+    return path
+
+
+# ---- ダミーデータ（個人・実機のデータを写さないため、すべて乱数と公称モデルから作る） ----
+
+def pose_csv(path: Path, sigma: float) -> Path:
+    rows = []
+    for _ in range(60):
+        robot = [rng.uniform(300, 700), rng.uniform(-300, 300), rng.uniform(200, 800)]
+        rows.append(robot + [v + rng.gauss(0.0, sigma) for v in robot])
+    return write_csv(path, ["RobotX", "RobotY", "RobotZ", "MeasureX", "MeasureY", "MeasureZ"], rows)
+
+
+# X 方向 400 mm の直線移動。amp は進行方向に直交するずれの大きさ [mm]
+def path_pair(folder: Path, stem: str, amp: float) -> list[Path]:
+    xs = [300.0 + 0.5 * i for i in range(801)]
+    bt = [[i, x, -200.0 + amp * math.sin(2 * math.pi * 1.5 * (x - 300) / 400) + rng.gauss(0, 0.005), 500.0 + 0.6 * amp * math.sin(2 * math.pi * 2.5 * (x - 300) / 400 + 1) + rng.gauss(0, 0.005)] for i, x in enumerate(xs)]
+    fm = [[i, x, -200.0, 500.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] for i, x in enumerate(xs)]
+    return [write_csv(folder / f"{stem}_BT.csv", ["TIMESTAMP", "#X(mm)", "Y(mm)", "Z(mm)"], bt, pre=[["FARO dummy"]]),
+            write_csv(folder / f"{stem}_FM.csv", FM_HEADER, fm, pre=[["robot log dummy"], ["sampling 1ms"]], post=[["MAX"], ["MIN"]])]
+
+
+FM_HEADER = ["Time[ms]", "RefPos(X)[mm]", "RefPos(Y)[mm]", "RefPos(Z)[mm]"] + [f"Joint(J{j})[deg]" for j in range(1, 7)]
+
+
+# J1 を 0→30° 台形速度で回し、FARO 側は半径 800 mm の円弧に周期的な伝達誤差（減速比 120 の 1 次・2 次）を乗せる
+def joint_pair(folder: Path, stem: str, a1: float, a2: float) -> list[Path]:
+    speed, accel, dist, dwell = 10.0, 40.0, 30.0, 0.3
+    ta = speed / accel
+    tc = dist / speed - ta
+
+    def angle(t: float) -> float:
+        t = min(max(t - dwell, 0.0), 2 * ta + tc)
+        return 0.5 * accel * t * t if t < ta else 0.5 * accel * ta * ta + speed * (t - ta) if t < ta + tc else dist - 0.5 * accel * (2 * ta + tc - t) ** 2
+
+    fm, bt = [], []
+    for ms in range(int((2 * dwell + 2 * ta + tc) * 1000)):
+        q = angle(ms / 1000)
+        actual = math.radians(q + a1 * math.sin(2 * math.pi * q / 1.5 + 0.3) + a2 * math.sin(2 * math.pi * q / 0.75 + 1.0))
+        fm.append([ms, 800 * math.cos(math.radians(q)), 800 * math.sin(math.radians(q)), 600.0, q, 0.0, 0.0, 0.0, -90.0, 0.0])
+        # FARO は時計が別なので、時刻の起点をずらしておく
+        bt.append([5000 + ms, 800 * math.cos(actual) + rng.gauss(0, 0.001), 800 * math.sin(actual) + rng.gauss(0, 0.001), 600.0 + rng.gauss(0, 0.001)])
+    return [write_csv(folder / f"{stem}_FM.csv", FM_HEADER, fm, pre=[["robot log dummy"], ["sampling 1ms"]], post=[["MAX"], ["MIN"]]),
+            write_csv(folder / f"{stem}_BT.csv", ["TIMESTAMP", "#X(mm)", "Y(mm)", "Z(mm)"], bt, pre=[["FARO dummy"]])]
+
+
+# 公称パラメータで指令位置を、幾何誤差を乗せたパラメータで計測位置を作る（解析 API の R6E モデルを使う）
+def faro_csvs(folder: Path, analysis_url: str) -> list[Path]:
+    joints = [[rng.uniform(-60, 60), rng.uniform(-20, 40), rng.uniform(-20, 40), rng.uniform(-90, 90), rng.uniform(-60, 60), rng.uniform(-90, 90)] for _ in range(120)]
+    X = [j + [1] for j in joints]
+    api(analysis_url, "/init", {"model_type": "kinema", "settings": {"robot_type": "R6E"}})
+    robot = api(analysis_url, "/predict", {"X": X})["predictions"]
+    params = api(analysis_url, "/save")
+    params["GeomErr"] = [[rng.gauss(0, s) for s in (0.2, 0.2, 0.2, 0.0005, 0.0005, 0.0005)] for _ in params["GeomErr"]]
+    api(analysis_url, "/load", params)
+    measure = api(analysis_url, "/predict", {"X": X})["predictions"]
+    header = [f"J{j}" for j in range(1, 7)] + ["RobotX", "RobotY", "RobotZ", "MeasureX", "MeasureY", "MeasureZ", "ToolID"]
+    rows = [j + r + [v + rng.gauss(0, 0.01) for v in m] + [1] for j, r, m in zip(joints, robot, measure)]
+    return [write_csv(folder / f"faro_sample{i + 1}.csv", header, rows[i * 60:(i + 1) * 60]) for i in range(2)]
+
+
+# 2 本の工具で姿勢を変えながら同じ点付近を計測したデータ。計測値は真のオフセットを入れたツール補正モデルで作る
+def toolcalib_csv(folder: Path, analysis_url: str) -> Path:
+    poses = [[500 + rng.uniform(-50, 50), rng.uniform(-50, 50), 400 + rng.uniform(-50, 50), rng.uniform(-30, 30), rng.uniform(-30, 30), rng.uniform(-180, 180), 1 + i % 2] for i in range(30)]
+    X = [p + [0, i] for i, p in enumerate(poses)]
+    api(analysis_url, "/init", {"model_type": "tool_calib", "settings": {"tool_offsets": [[5.0, -3.0, 120.0], [40.0, 2.0, 95.0]], "observation_model": "relative"}})
+    measure = api(analysis_url, "/predict", {"X": X})["predictions"]
+    rows = [p[:6] + [v + rng.gauss(0, 0.005) for v in m] + [p[6]] for p, m in zip(poses, measure)]
+    return write_csv(folder / "toolcalib_sample.csv", [f"Robot{a}" for a in "XYZUVW"] + ["MeasureX", "MeasureY", "MeasureZ", "ToolID"], rows)
+
+
+# ---- 画面操作と撮影 ----
+
+class Manual:
+    def __init__(self, page: Page):
+        self.page = page
+
+    def shot(self, name: str, *marks: Locator, top: Locator | None = None):
+        """marks を赤枠で囲んで撮る。top を指定するとその要素がヘッダー直下に、無ければ最初の赤枠が画面中央に来るようスクロールする。"""
+        if top:
+            top.first.evaluate("e => window.scrollTo(0, e.getBoundingClientRect().top + window.scrollY - 80)")
+        elif marks:
+            marks[0].first.evaluate("e => e.scrollIntoView({block: 'center'})")
+        self.page.wait_for_timeout(400)  # スクロールやメニューのアニメーションが落ち着くのを待つ
+        for mark in marks:
+            mark.evaluate_all("""els => els.forEach(e => {
+                // 画面端の要素でも枠が切れないよう、画面内に収める
+                const r = e.getBoundingClientRect(), d = document.createElement('div');
+                const left = Math.max(r.left - 5, 1), top = Math.max(r.top - 5, 1), right = Math.min(r.right + 5, innerWidth - 1), bottom = Math.min(r.bottom + 5, innerHeight - 1);
+                d.className = 'manual-mark';
+                Object.assign(d.style, {position: 'fixed', left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px`, boxSizing: 'border-box',
+                    border: '3px solid #e53935', borderRadius: '6px', zIndex: 99999, pointerEvents: 'none'});
+                document.body.append(d);
+            })""")
+        self.page.screenshot(path=OUT / f"{name}.png")
+        self.page.evaluate("document.querySelectorAll('.manual-mark').forEach(e => e.remove())")
+        print(name)
+
+    def field(self, label: str) -> Locator:
+        return self.page.locator(".q-field:visible").filter(has=self.page.locator(".q-field__label", has_text=re.compile(f"^{re.escape(label)}$")))
+
+    def button(self, name: str) -> Locator:
+        return self.page.get_by_role("button", name=name, exact=True)
+
+    def tab(self, name: str) -> Locator:
+        """タブを切り替える。切り替えのアニメーション中は前のタブも表示されているため、終わるまで待つ。"""
+        tab = self.page.get_by_role("tab", name=name)
+        tab.click()
+        self.page.wait_for_timeout(800)
+        return tab
+
+    def upload(self, index: int, paths: list[Path]) -> Locator:
+        """index 番目のアップロード欄にファイルを入れ、追加されたチップを返す。"""
+        self.page.locator(".q-uploader:visible").nth(index).locator("input[type=file]").set_input_files(paths)
+        chips = self.page.locator(".q-chip:visible").filter(has_text=re.compile("|".join(re.escape(p.name) for p in paths)))
+        chips.last.wait_for()
+        return chips
+
+    def run(self, button: Locator):
+        """処理中スピナーが出て消えるまで待つ（学習・描画の完了待ち）。"""
+        button.click()
+        button.locator(".q-spinner").wait_for(state="attached", timeout=5000)
+        button.locator(".q-spinner").wait_for(state="detached", timeout=300_000)
+
+
+def draw_page(m: Manual, data: dict):
+    page = m.page
+    m.shot("01_start", page.get_by_role("tab"))
+    m.shot("02_header", page.locator(".q-header a"))
+
+    # 姿勢精度：系列の編集 → ファイル → 系列の追加・削除 → 設定 → 描画 → 保存
+    cards = page.locator(".q-card:visible")
+    m.shot("03_series", cards.nth(0).locator(".q-field"), top=page.get_by_role("tab", name="姿勢精度"))
+    m.upload(0, [data["pose_before"]])
+    m.upload(1, [data["pose_after"]])
+    m.shot("04_upload", page.locator(".q-uploader:visible"), page.locator(".q-chip:visible"), top=page.get_by_role("tab", name="姿勢精度"))
+    m.button("系列を追加").click()
+    m.shot("05_add_series", m.button("系列を追加"), cards.nth(2).locator("button:has(i:text('delete'))"), top=cards.nth(1))
+    cards.nth(2).locator("button:has(i:text('delete'))").click()
+    m.field("グラフ").click()
+    m.shot("06_options", m.field("グラフ"), page.locator(".q-menu"), m.field("タイトル"), page.locator(".q-checkbox"), top=cards.nth(1))
+    page.keyboard.press("Escape")
+    m.run(m.button("描画"))
+    m.shot("07_draw", m.button("描画"), page.locator(".q-img:visible"), top=m.button("描画"))
+    m.shot("08_save_png", m.button("PNG を保存"))
+
+    # 軌跡精度：系列ごとに BT/FM の組を入れて描画
+    m.tab("軌跡精度")
+    m.upload(0, data["path_before"])
+    m.upload(1, data["path_after"])
+    m.shot("09_path_upload", page.get_by_role("tab", name="軌跡精度"), page.locator(".q-chip:visible"), top=page.get_by_role("tab", name="軌跡精度"))
+    m.run(m.button("描画"))
+    m.shot("10_path_draw", m.button("描画"), page.locator(".q-img:visible"), top=m.button("描画"))
+
+    # 単軸：軸を選ぶと減速比が入る。FM/BT の組を入れて描画
+    m.tab("単軸")
+    m.upload(0, data["joint_before"])
+    m.upload(1, data["joint_after"])
+    m.shot("11_single_settings", m.field("軸"), m.field("減速比"), page.locator(".q-chip:visible"), top=page.locator(".q-card:visible").nth(1))
+    m.run(m.button("描画"))
+    m.shot("12_single_draw", m.button("描画"), page.locator(".q-img:visible"), top=m.button("描画"))
+
+
+def analysis_page(m: Manual, data: dict, work: Path):
+    page = m.page
+    page.locator(".q-header a", has_text="解析").click()
+    page.wait_for_url("**/analysis")
+    note = page.get_by_text("学習済みモデルを 1 つだけ保持")
+    m.shot("13_analysis_note", note)
+
+    # キネマ補正：機種・モード → 荷重・工具 → CSV と学習 → 結果 → 保存 → 保存済みパラメータで評価
+    m.field("calibration_mode").click()
+    m.shot("14_kinema_mode", m.field("機種"), m.field("mode"), m.field("calibration_mode"), page.locator(".q-menu"))
+    page.keyboard.press("Escape")
+    m.shot("15_kinema_payload", page.locator(".q-field").filter(has_text=re.compile("質量|重心|重力")), page.locator(".q-textarea"), top=m.field("機種"))
+    chips = m.upload(0, data["faro"])
+    m.shot("16_kinema_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.locator(".q-textarea"))
+    m.run(m.button("学習"))
+    m.shot("17_kinema_result", page.locator(".q-img:visible"), page.get_by_text("R² ="), top=page.locator(".q-img:visible"))
+    with page.expect_download() as download:
+        m.button("パラメータを保存").click()
+    params = work / download.value.suggested_filename
+    download.value.save_as(params)
+    m.shot("18_save_param", m.button("パラメータを保存"))
+    page.get_by_text("保存済みパラメータで評価する").click()
+    chips = m.upload(1, [params])
+    m.run(m.button("読み込んで評価"))
+    m.shot("19_load_param", page.get_by_text("保存済みパラメータで評価する"), chips, m.button("読み込んで評価"), top=m.button("学習"))
+
+    # 関節補正：軸・減速比・maxfev → FM/BT の組 → 学習 → 補正前後のグラフと周期成分の表
+    m.tab("関節補正")
+    chips = m.upload(0, data["joint_before"])
+    m.shot("20_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
+    m.run(m.button("学習"))
+    m.shot("21_joint_result", page.locator(".q-table__container:visible"))
+
+    # ツール補正：CSV → 学習 → RMSE と工具オフセットの表
+    m.tab("ツール補正")
+    chips = m.upload(0, [data["toolcalib"]])
+    m.shot("22_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
+    m.run(m.button("学習"))
+    m.shot("23_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
+
+    # エラー表示の例：関節補正で BT を入れ忘れた場合
+    page.reload()
+    m.tab("関節補正")
+    m.upload(0, [data["joint_before"][0]])
+    m.button("学習").click()
+    page.locator(".q-notification").wait_for()
+    m.shot("24_error", page.locator(".q-notification"))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--url", default="http://localhost:8080", help="画面（NiceGUI）の URL")
+    parser.add_argument("--analysis-url", default="http://localhost:8001", help="解析 API の URL（ダミーデータの作成に使う）")
+    args = parser.parse_args()
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp, sync_playwright() as p:
+        work = Path(tmp)
+        data = {
+            "pose_before": pose_csv(work / "pose_before.csv", 0.5), "pose_after": pose_csv(work / "pose_after.csv", 0.1),
+            "path_before": path_pair(work, "path_before", 0.2), "path_after": path_pair(work, "path_after", 0.05),
+            "joint_before": joint_pair(work, "J1_before", 0.004, 0.0015), "joint_after": joint_pair(work, "J1_after", 0.001, 0.0004),
+            "faro": faro_csvs(work, args.analysis_url), "toolcalib": toolcalib_csv(work, args.analysis_url),
+        }
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1280, "height": 800}, accept_downloads=True)
+        page.set_default_timeout(30_000)
+        page.goto(args.url)
+        page.wait_for_url("**/draw")
+        m = Manual(page)
+        draw_page(m, data)
+        analysis_page(m, data, work)
+        browser.close()
+
+
+if __name__ == "__main__":
+    main()

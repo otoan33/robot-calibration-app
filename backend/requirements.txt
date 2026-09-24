@@ -1,2 +1,5 @@
 fastapi==0.141.*
 uvicorn[standard]>=0.32
+matplotlib>=3.7
+numpy>=1.26
+scipy>=1.11
