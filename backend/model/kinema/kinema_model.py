@@ -62,7 +62,7 @@ class KinemaModel(BaseModel):
         return self.kinema.calibration_parameter_indices
 
     def fit(self, X: Any, y: Any) -> "KinemaModel":
-        data = parse_kinema_input(X)
+        data = self._parse(X)
         targets = self.observation.validate_targets(y, len(data.joints))
 
         # ロボット側と観測側のパラメータを 1 本のベクトルにして同時に最小二乗推定する
@@ -86,16 +86,16 @@ class KinemaModel(BaseModel):
         return self
 
     def predict(self, X: Any) -> np.ndarray:
-        data = parse_kinema_input(X)
+        data = self._parse(X)
         return self.observation.transform(self._predict_positions(data), data.sequence_ids, data.times)
 
     def score(self, X: Any, y: Any) -> float:
-        actual = self.observation.validate_targets(y, len(parse_kinema_input(X).joints))
+        actual = self.observation.validate_targets(y, len(self._parse(X).joints))
         return r2_score(actual, self.predict(X))
 
     def predict_positions(self, X: Any) -> np.ndarray:
         """観測モデルを通さない工具先端の XYZ を返す。"""
-        return self._predict_positions(parse_kinema_input(X))
+        return self._predict_positions(self._parse(X))
 
     def save(self) -> dict[str, Any]:
         # 観測モデルが identity のときは、旧形式と互換のロボットパラメータだけを返す
@@ -114,6 +114,10 @@ class KinemaModel(BaseModel):
         if observation_name != observation_type(self.observation):
             self.observation = create_observation({"type": observation_name}, "identity")
         self.observation.load(observation.get("parameters", {}))
+
+    # X を分解する（入力形式の違う派生モデルが差し替える）
+    def _parse(self, X: Any) -> KinemaInput:
+        return parse_kinema_input(X)
 
     # 最小二乗法で最小化する残差（観測値 - 現在のパラメータでの予測値）
     def _residuals(self, values: np.ndarray, data: KinemaInput, targets: np.ndarray, tool_parameter_indices: np.ndarray) -> np.ndarray:

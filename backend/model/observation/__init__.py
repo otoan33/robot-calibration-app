@@ -4,11 +4,13 @@ from typing import Any
 from .base import ObservationModel
 from .identity import IdentityObservationModel
 from .relative import RelativeObservationModel
+from .rigid import RigidObservationModel
 from .scalar import ScalarObservationModel
 
 OBSERVATION_MODELS = {
     "identity": IdentityObservationModel,
     "relative": RelativeObservationModel,
+    "rigid": RigidObservationModel,
     "scalar": ScalarObservationModel,
 }
 
@@ -31,6 +33,7 @@ __all__ = [
     "ObservationModel",
     "IdentityObservationModel",
     "RelativeObservationModel",
+    "RigidObservationModel",
     "ScalarObservationModel",
     "OBSERVATION_MODELS",
     "create_observation",

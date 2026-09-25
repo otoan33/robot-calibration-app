@@ -20,6 +20,7 @@ class KinemaJointModel(KinemaModel):
     """
 
     TRAIN_PATTERNS = {
+        "kinema_only": [(True, ())],
         "trans_j1": [(False, (1,))],
         "trans_all": [(False, ALL_JOINTS)],
         "kinema_trans_j1": [(True, (1,))],
@@ -39,10 +40,13 @@ class KinemaJointModel(KinemaModel):
     # 段階ごとに推定対象を切り替えて、KinemaModel の同時最小二乗を順に行う
     def fit(self, X: Any, y: Any) -> "KinemaJointModel":
         for use_kinema, joints in self.stages:
-            self.kinema.set_calibration_mode(self.kinema_mode if use_kinema else "none")
-            self.transmission.joints = list(joints)
+            self._set_stage(use_kinema, joints)
             super().fit(X, y)
         return self
+
+    def _set_stage(self, use_kinema: bool, joints: list[int] | tuple[int, ...]) -> None:
+        self.kinema.set_calibration_mode(self.kinema_mode if use_kinema else "none")
+        self.transmission.joints = list(joints)
 
     def save(self) -> dict[str, Any]:
         return {"robot_model": self._save_robot(), "transmission_error": self.transmission.save(), "observation_model": {"type": observation_type(self.observation), "parameters": self.observation.save()}}
