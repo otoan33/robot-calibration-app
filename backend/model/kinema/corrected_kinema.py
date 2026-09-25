@@ -14,6 +14,7 @@ class CorrectedKinema:
 
     # 旧 KinemaCalib の各 TRAINMODE で補正する幾何パラメータ（7x6 を平坦化した添字）
     CALIBRATION_INDICES_BY_MODE = {
+        "none": (),
         "origin_actual": (0, 1, 2, 3, 4, 5, 11, 17, 23, 29, 35),
         "arm_actual": (0, 1, 2, 3, 4, 5, 11, 17, 23, 29, 35, 6, 12, 18, 19, 31),
         "kinema_actual": (0, 1, 2, 3, 4, 5, 11, 17, 23, 29, 35, 6, 12, 18, 19, 31, 7, 24, 25, 30, 9, 15, 16, 21, 27, 33, 36),
@@ -24,11 +25,15 @@ class CorrectedKinema:
 
     def __init__(self, params: KinemaModelParam, calibration_mode: str = "all_actual", max_nfev: int | None = None) -> None:
         self.params = params
+        self.set_calibration_mode(calibration_mode)
+        self.max_nfev = max_nfev
+        self.calibration_result_: dict[str, Any] | None = None
+
+    # 段階的な同定で、推定対象の幾何パラメータ・剛性率を切り替える（"none" はキネマを固定する）
+    def set_calibration_mode(self, calibration_mode: str) -> None:
         self.calibration_mode = calibration_mode.lower()
         self.calibration_parameter_indices = self.CALIBRATION_INDICES_BY_MODE[self.calibration_mode]
         self.calibration_stiffness_indices = self.ALL_ACTUAL_STIFFNESS_INDICES if self.calibration_mode == "all_actual" else ()
-        self.max_nfev = max_nfev
-        self.calibration_result_: dict[str, Any] | None = None
 
     def predict(self, joints: np.ndarray) -> np.ndarray:
         """関節角 ``(N, 6)`` [deg] から補正済み手先姿勢を返す。"""

@@ -83,3 +83,6 @@ class KinemaModelParam:
             arm=np.asarray(stiffness["EI"], dtype=np.float64),
             base=float(stiffness["km1"]),
         )
+
+        # 関節伝達誤差の周期 [deg]（J1〜J6 それぞれ複数。機種ごとに固定で、振幅・位相だけを同定する）
+        self.trans_err_periods = [np.asarray(data["TransErrPeriod"][str(joint)], dtype=np.float64) for joint in range(1, 7)]

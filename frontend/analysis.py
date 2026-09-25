@@ -12,13 +12,22 @@ CALIBRATION_MODES = {
     "actual": ["all_actual", "kinema_actual", "arm_actual", "origin_actual"],
     "ideal": ["local", "origin", "local_tool", "origin_tool", "local_ideal", "origin_ideal"],
 }
+# 同定パターン（kinema_only 以外は backend の KinemaJointModel.TRAIN_PATTERNS。伝達誤差は actual のみ）
+TRAIN_PATTERNS = {
+    "kinema_only": "キネマのみ", "trans_j1": "伝達誤差 J1", "trans_all": "伝達誤差 全軸",
+    "kinema_trans_j1": "キネマ＋伝達誤差 J1（同時）", "kinema_trans_all": "キネマ＋伝達誤差 全軸（同時）",
+    "kinema_then_trans_j1": "キネマ → 伝達誤差 J1（2 段階）", "kinema_then_trans_all": "キネマ → 伝達誤差 全軸（2 段階）",
+}
 
 
 def kinema_panel():
     with ui.row().classes("items-center"):
         robot_type = ui.select(["R6A", "R6B", "R6C", "R6D", "R6E"], value="R6E", label="機種")
-        mode = ui.select(list(CALIBRATION_MODES), value="actual", label="mode", on_change=lambda e: calibration_mode.set_options(CALIBRATION_MODES[e.value], value=CALIBRATION_MODES[e.value][0]))
+        mode = ui.select(list(CALIBRATION_MODES), value="actual", label="mode", on_change=lambda e: (
+            calibration_mode.set_options(CALIBRATION_MODES[e.value], value=CALIBRATION_MODES[e.value][0]),
+            pattern.set_options(TRAIN_PATTERNS if e.value == "actual" else {"kinema_only": TRAIN_PATTERNS["kinema_only"]}, value="kinema_only")))
         calibration_mode = ui.select(CALIBRATION_MODES["actual"], value="all_actual", label="calibration_mode").classes("w-40")
+        pattern = ui.select(TRAIN_PATTERNS, value="kinema_only", label="同定パターン").classes("w-72")
     with ui.row().classes("items-center"):
         payload = [ui.number(label, value=0.0).classes("w-28") for label in ("可搬質量 [kg]", "重心 X [mm]", "重心 Y [mm]", "重心 Z [mm]")]
         gravity = [ui.number(f"重力方向 {axis}", value=value).classes("w-28") for axis, value in zip("XYZ", (0.0, 0.0, -1.0))]
@@ -29,11 +38,15 @@ def kinema_panel():
 
     def settings() -> dict:
         return {
-            "robot_type": robot_type.value, "mode": mode.value, "calibration_mode": calibration_mode.value,
+            "robot_type": robot_type.value, "mode": mode.value, "calibration_mode": calibration_mode.value, "pattern": pattern.value,
             "payload_mass": payload[0].value, "payload_center": [n.value for n in payload[1:]],
             "gravity_direction": [n.value for n in gravity],
             "tool_offsets": [[float(v) for v in line.split(",")] for line in tool_offsets.value.splitlines() if line.strip()],
         }
+
+    # キネマのみは従来の kinema モデル、伝達誤差を含むパターンは kinema_joint モデルで学習する
+    def init_body() -> dict:
+        return {"model_type": "kinema" if pattern.value == "kinema_only" else "kinema_joint", "settings": settings()}
 
     # 補正前（計測 − 指令）と補正後（計測 − モデルの予測）の位置誤差を比べて、補正の効果を示す
     async def show_result():
@@ -43,18 +56,26 @@ def kinema_panel():
         score = (await api.analysis("/evaluate", {"X_test": X, "y_test": positions.tolist()}))["score"]
         datasets = [loaders.pose_dataset_from_error("Before", TAB10[1], positions - references), loaders.pose_dataset_from_error("After", TAB10[0], positions - predicted)]
         show_png(result, await api.plot("pose_accuracy", "norm_with_bar", {"datasets": datasets, "title": "Kinematic calibration"}), "kinema_calibration.png")
+        saved = await api.analysis("/save")
         with result:
             ui.label(f"R² = {score:.6f}")
+            # 伝達誤差を含むモデルでは、軸・周期ごとの振幅と位相を示す
+            if "transmission_error" in saved:
+                ui.table(columns=[{"name": k, "label": label, "field": k} for k, label in (("joint", "軸"), ("period", "周期 [deg]"), ("amplitude", "振幅 [deg]"), ("offset", "位相 [deg]"))],
+                         rows=[{"joint": joint, "period": f"{p:.4f}", "amplitude": f"{a:.6f}", "offset": f"{o:.2f}"} for joint, wave in saved["transmission_error"].items() for p, a, o in zip(wave["periods"], wave["amplitudes"], wave["offsets"])])
 
     async def train():
         joints, _, positions, tool_ids = loaders.load_faro(list(csv_files.values()))
-        await api.analysis("/init", {"model_type": "kinema", "settings": settings()})
+        await api.analysis("/init", init_body())
+        # 伝達誤差だけを同定するときなどに、保存済みのキネマパラメータから始められるようにする
+        if start_from_loaded.value:
+            await api.analysis("/load", json.loads(next(iter(param_files.values()))))
         await api.analysis("/train", {"X_train": np.column_stack((joints, tool_ids)).tolist(), "y_train": positions.tolist()})
         await show_result()
 
     # 保存済みパラメータで補正した場合の精度を、学習せずに確かめる
     async def load():
-        await api.analysis("/init", {"model_type": "kinema", "settings": settings()})
+        await api.analysis("/init", init_body())
         await api.analysis("/load", json.loads(next(iter(param_files.values()))))
         await show_result()
 
@@ -67,6 +88,7 @@ def kinema_panel():
     with ui.expansion("保存済みパラメータで評価する").classes("w-full"):
         file_upload(param_files, "パラメータ JSON")
         load_button = ui.button("読み込んで評価", on_click=lambda: run_busy(load_button, load))
+        start_from_loaded = ui.checkbox("このパラメータを学習の初期値にする（キネマを固定して伝達誤差だけ同定する場合など）")
     result = ui.column().classes("w-full")
 
 
