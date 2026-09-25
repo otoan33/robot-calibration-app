@@ -50,6 +50,7 @@ style: |
 | | 軌跡精度 | 直線軌跡の横ずれを比べる |
 | | 単軸 | 1 軸の角度伝達誤差とその周波数成分を見る |
 | 解析 | キネマ補正 | 機構パラメータと関節の伝達誤差を推定し、補正前後の精度を示す |
+| | 軌跡キャリブ | 動かしながら測ったデータから、キネマ・伝達誤差・時刻ずれを推定する |
 | | 関節補正 | 減速機の周期誤差（振幅・位相）を推定する |
 | | ツール補正 | 工具オフセットを推定する |
 
@@ -308,11 +309,62 @@ style: |
 
 ---
 
+<!-- header: 解析ページ｜軌跡キャリブ -->
+
+## 25. 軌跡キャリブの設定を選ぶ
+
+![bg right:64% contain](img/25_traj_settings.png)
+
+- 動作中の関節角（FM）と手先の計測（BT）から推定する
+- **機種**・**同定パターン** を選ぶ。パターンはキネマ補正と同じ＋「時刻・座標のみ」
+- **計測点の間引き間隔**：小さいほど点が増え、学習に時間がかかる
+
+---
+
+## 26. FM/BT の組を入れて学習する
+
+![bg right:64% contain](img/26_traj_train.png)
+
+- **FM と BT の CSV** の欄に、動作ごとの `*_FM.csv` と `*_BT.csv` を入れる（**複数動作** 可）
+- 2 つは末尾以外が同じ名前にしておく
+- 可搬物・工具オフセットを入れて **学習** を押す
+
+---
+
+## 27. 補正の効果を確認する
+
+![bg right:64% contain](img/27_traj_result.png)
+
+- **グラフ**：Before は公称のキネマで時刻と座標だけを合わせた誤差、After は推定後の誤差
+- **R²** の横に、使った計測点と動作の数が出る
+
+---
+
+## 28. 時刻ずれと計測器の位置を見る
+
+![bg right:64% contain](img/28_traj_offsets.png)
+
+- **表**：BT の先頭が FM の何秒目に当たるか（動作ごと）
+- **計測器の座標**：ロボットから見た計測器の位置 [mm] と向き [deg]
+- 伝達誤差を含むパターンでは、下に振幅・位相の表が出る
+
+---
+
+## 29. 保存済みパラメータで別の日のデータを評価する
+
+![bg right:64% contain](img/29_traj_evaluate.png)
+
+- 同定パターンで「時刻・座標のみ」を選ぶ
+- 「保存済みパラメータを使う」を開いて **JSON** を入れ、**このパラメータを学習の初期値にする** にチェックして **学習**
+- キネマ補正で保存した JSON も使える
+
+---
+
 <!-- header: 解析ページ｜関節補正 -->
 
-## 25. 関節補正を学習する
+## 30. 関節補正を学習する
 
-![bg right:64% contain](img/25_joint_train.png)
+![bg right:64% contain](img/30_joint_train.png)
 
 - **関節補正** タブで **軸・減速比** を選ぶ
 - `*_FM.csv` と `*_BT.csv` の組を入れて **学習**
@@ -320,9 +372,9 @@ style: |
 
 ---
 
-## 26. 周期誤差の推定結果
+## 31. 周期誤差の推定結果
 
-![bg right:64% contain](img/26_joint_result.png)
+![bg right:64% contain](img/31_joint_result.png)
 
 - グラフ：補正前後の誤差と周波数成分
 - 表：減速比の 1 次・2 次の **周期・振幅・位相**
@@ -332,9 +384,9 @@ style: |
 
 <!-- header: 解析ページ｜ツール補正 -->
 
-## 27. ツール補正を学習する
+## 32. ツール補正を学習する
 
-![bg right:64% contain](img/27_tool_train.png)
+![bg right:64% contain](img/32_tool_train.png)
 
 - **ツール補正** タブで計測 CSV を入れて **学習**
 - 列：`RobotX/Y/Z/U/V/W`、`MeasureX/Y/Z`、`ToolID`
@@ -342,9 +394,9 @@ style: |
 
 ---
 
-## 28. 工具オフセットを確認する
+## 33. 工具オフセットを確認する
 
-![bg right:64% contain](img/28_tool_result.png)
+![bg right:64% contain](img/33_tool_result.png)
 
 - **相対 RMSE** の補正前 → 補正後で効果を見る
 - 表が推定した工具ごとのオフセット [mm]
@@ -354,9 +406,9 @@ style: |
 
 <!-- header: 困ったとき -->
 
-## 29. エラーが出たとき
+## 34. エラーが出たとき
 
-![bg right:64% contain](img/29_error.png)
+![bg right:64% contain](img/34_error.png)
 
 - 失敗すると画面下に **赤い通知** が出る
 - よくある原因：FM/BT の片方がない、組の名前が合っていない、列名が違う
@@ -374,6 +426,7 @@ style: |
 | 軌跡精度 | `*_BT.csv` + `*_FM.csv` | BT：`#X(mm)`, `Y(mm)`, `Z(mm)`<br>FM：`RefPos(X/Y/Z)[mm]` |
 | 単軸・関節補正 | `*_FM.csv` + `*_BT.csv`（区間ごとに 1 組） | FM：時刻, `Joint(J1〜J6)[deg]`<br>BT：`TIMESTAMP`, `#X(mm)`, `Y(mm)`, `Z(mm)` |
 | キネマ補正 | FARO の CSV（複数可） | `J1〜J6`, `RobotX/Y/Z`, `MeasureX/Y/Z`, `ToolID` |
+| 軌跡キャリブ | `*_FM.csv` + `*_BT.csv`（動作ごとに 1 組） | FM：`Time[ms]`, `Joint(J1〜J6)[deg]`<br>BT：`TIMESTAMP`, `#X(mm)`, `Y(mm)`, `Z(mm)` |
 | ツール補正 | CSV 1 つ | `RobotX/Y/Z/U/V/W`, `MeasureX/Y/Z`, `ToolID` |
 
 FM と BT は、末尾（`_FM.csv` / `_BT.csv`）以外が同じ名前のものを組にします。

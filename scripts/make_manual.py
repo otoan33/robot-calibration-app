@@ -82,6 +82,16 @@ def joint_pair(folder: Path, stem: str, a1: float, a2: float) -> list[Path]:
             write_csv(folder / f"{stem}_BT.csv", ["TIMESTAMP", "#X(mm)", "Y(mm)", "Z(mm)"], bt, pre=[["FARO dummy"]])]
 
 
+# 解析 API が保持している kinema_joint モデルに、真値として幾何誤差と関節の伝達誤差を乗せる
+def add_errors(analysis_url: str):
+    params = api(analysis_url, "/save")
+    params["robot_model"]["GeomErr"] = [[rng.gauss(0, s) for s in (0.2, 0.2, 0.2, 0.0005, 0.0005, 0.0005)] for _ in params["robot_model"]["GeomErr"]]
+    for wave in params["transmission_error"].values():
+        wave["amplitudes"] = [rng.uniform(0.001, 0.004) for _ in wave["periods"]]
+        wave["offsets"] = [rng.uniform(-180, 180) for _ in wave["periods"]]
+    api(analysis_url, "/load", params)
+
+
 # 公称パラメータで指令位置を、幾何誤差と関節の伝達誤差を乗せたパラメータで計測位置を作る（解析 API の R6E モデルを使う）
 def faro_csvs(folder: Path, analysis_url: str) -> list[Path]:
     joints = [[rng.uniform(-60, 60), rng.uniform(-20, 40), rng.uniform(-20, 40), rng.uniform(-90, 90), rng.uniform(-60, 60), rng.uniform(-90, 90)] for _ in range(120)]
@@ -89,16 +99,38 @@ def faro_csvs(folder: Path, analysis_url: str) -> list[Path]:
     # 工具が J6 軸上にあると J6 の伝達誤差が位置に現れないため、軸から外したオフセットにする（画面にも同じ値を入れる）
     api(analysis_url, "/init", {"model_type": "kinema_joint", "settings": {"robot_type": "R6E", "tool_offsets": [TOOL_OFFSET]}})
     robot = api(analysis_url, "/predict", {"X": X})["predictions"]
-    params = api(analysis_url, "/save")
-    params["robot_model"]["GeomErr"] = [[rng.gauss(0, s) for s in (0.2, 0.2, 0.2, 0.0005, 0.0005, 0.0005)] for _ in params["robot_model"]["GeomErr"]]
-    for wave in params["transmission_error"].values():
-        wave["amplitudes"] = [rng.uniform(0.001, 0.004) for _ in wave["periods"]]
-        wave["offsets"] = [rng.uniform(-180, 180) for _ in wave["periods"]]
-    api(analysis_url, "/load", params)
+    add_errors(analysis_url)
     measure = api(analysis_url, "/predict", {"X": X})["predictions"]
     header = [f"J{j}" for j in range(1, 7)] + ["RobotX", "RobotY", "RobotZ", "MeasureX", "MeasureY", "MeasureZ", "ToolID"]
     rows = [j + r + [v + rng.gauss(0, 0.01) for v in m] + [1] for j, r, m in zip(joints, robot, measure)]
     return [write_csv(folder / f"faro_sample{i + 1}.csv", header, rows[i * 60:(i + 1) * 60]) for i in range(2)]
+
+
+# 3 動作ぶんの FM（関節角の軌道、1 ms 刻み）と BT（計測器の手先軌跡、5 ms 刻み）の組。
+# BT は誤差入りのモデルの手先位置を、計測器の座標（回転＋並進）へ移し、動作ごとに時刻をずらした絶対時刻で書く
+def trajectory_pairs(folder: Path, analysis_url: str) -> list[Path]:
+    api(analysis_url, "/init", {"model_type": "kinema_joint", "settings": {"robot_type": "R6E", "tool_offsets": [TOOL_OFFSET]}})
+    add_errors(analysis_url)
+    roll, pitch, yaw = (math.radians(v) for v in (10.0, -5.0, 120.0))
+    cr, sr, cp, sp, cy, sy = math.cos(roll), math.sin(roll), math.cos(pitch), math.sin(pitch), math.cos(yaw), math.sin(yaw)
+    rotation = [[cr * cp, cr * sp * sy - sr * cy, cr * sp * cy + sr * sy], [sr * cp, sr * sp * sy + cr * cy, sr * sp * cy - cr * sy], [-sp, cp * sy, cp * cy]]
+    shift = [1500.0, -300.0, 200.0]
+    paths = []
+    for motion in range(3):
+        # 前後 1 秒は停止し、その間はなめらかに動く 10 秒の軌道
+        center = [rng.uniform(lo, hi) for lo, hi in zip((-60, -10, 0, -60, -40, -90), (60, 30, 30, 60, 40, 90))]
+        amp = [rng.uniform(lo, hi) for lo, hi in zip((20, 10, 10, 30, 20, 40), (60, 25, 25, 80, 40, 120))]
+        wave = [(rng.uniform(0.05, 0.2), rng.uniform(0, 2 * math.pi)) for _ in range(6)]
+        joints = lambda t: [c + a * math.sin(2 * math.pi * f * t + p) * min(max(min(t - 1.0, 9.0 - t), 0.0), 1.0) ** 2 for c, a, (f, p) in zip(center, amp, wave)]
+        fm = [[ms, 0.0, 0.0, 0.0] + joints(ms / 1000) for ms in range(10_000)]
+        # BT は FM の 0.3〜0.5 秒目から記録を始め、計測器の時計は FM とずれている
+        robot_times = [0.3 + 0.1 * motion + 0.005 * i for i in range(1800)]
+        robot = api(analysis_url, "/predict", {"X": [joints(t) + [1] for t in robot_times]})["predictions"]
+        clock = 1.7e9 + rng.uniform(-5000, 5000)
+        bt = [[(t * 1000 + clock), *[sum(r * v for r, v in zip(row, position)) + s + rng.gauss(0, 0.01) for row, s in zip(rotation, shift)]] for t, position in zip(robot_times, robot)]
+        paths += [write_csv(folder / f"move{motion + 1}_FM.csv", FM_HEADER, fm, pre=[["robot log dummy"], ["sampling 1ms"]], post=[["MAX"], ["MIN"]]),
+                  write_csv(folder / f"move{motion + 1}_BT.csv", ["TIMESTAMP", "#X(mm)", "Y(mm)", "Z(mm)"], bt, pre=[["FARO dummy"]])]
+    return paths
 
 
 # 2 本の工具で姿勢を変えながら同じ点付近を計測したデータ。計測値は真のオフセットを入れたツール補正モデルで作る
@@ -248,19 +280,38 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.shot("24_trans_only", m.button("学習"), page.locator(".q-expansion-item .q-chip"), page.locator(".q-checkbox"), top=m.button("学習"))
     m.run(m.button("学習"))
 
+    # 軌跡キャリブ：設定 → FM/BT の組と学習 → 補正の効果 → 時刻ずれと計測器の座標 → 保存済みパラメータで別データを評価
+    m.tab("軌跡キャリブ")
+    page.locator(".q-textarea:visible textarea").fill(", ".join(f"{v:g}" for v in TOOL_OFFSET))
+    m.field("同定パターン").click()
+    m.shot("25_traj_settings", m.field("機種"), m.field("同定パターン"), m.field("計測点の間引き間隔 [ms]"), page.locator(".q-menu"), top=page.get_by_role("tab", name="軌跡キャリブ"))
+    page.get_by_role("option", name="キネマ＋伝達誤差 全軸（同時）").click()
+    chips = m.upload(0, data["trajectory"])
+    m.shot("26_traj_train", page.locator(".q-uploader:visible").first, chips, m.button("学習"), top=page.locator(".q-textarea:visible"))
+    m.run(m.button("学習"))
+    m.shot("27_traj_result", page.locator(".q-img:visible"), page.get_by_text("R² ="), top=page.locator(".q-img:visible"))
+    m.shot("28_traj_offsets", page.locator(".q-table__container:visible").first, page.get_by_text("計測器の座標"), top=page.get_by_text("R² ="))
+    page.get_by_text("保存済みパラメータを使う").click()
+    chips = m.upload(1, [params])
+    page.get_by_text("このパラメータを学習の初期値にする").click()
+    m.field("同定パターン").click()
+    page.get_by_role("option", name="時刻・座標のみ").click()
+    m.shot("29_traj_evaluate", m.button("学習"), chips, page.locator(".q-checkbox:visible"), top=m.button("学習"))
+    m.run(m.button("学習"))
+
     # 関節補正：軸・減速比・maxfev → FM/BT の組 → 学習 → 補正前後のグラフと周期成分の表
     m.tab("関節補正")
     chips = m.upload(0, data["joint_before"])
-    m.shot("25_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
+    m.shot("30_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
     m.run(m.button("学習"))
-    m.shot("26_joint_result", page.locator(".q-table__container:visible"))
+    m.shot("31_joint_result", page.locator(".q-table__container:visible"))
 
     # ツール補正：CSV → 学習 → RMSE と工具オフセットの表
     m.tab("ツール補正")
     chips = m.upload(0, [data["toolcalib"]])
-    m.shot("27_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("32_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
     m.run(m.button("学習"))
-    m.shot("28_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("33_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
 
     # エラー表示の例：関節補正で BT を入れ忘れた場合
     page.reload()
@@ -268,7 +319,7 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.upload(0, [data["joint_before"][0]])
     m.button("学習").click()
     page.locator(".q-notification").wait_for()
-    m.shot("29_error", page.locator(".q-notification"))
+    m.shot("34_error", page.locator(".q-notification"))
 
 
 def main():
@@ -285,6 +336,7 @@ def main():
             "path_before": path_pair(work, "path_before", 0.2), "path_after": path_pair(work, "path_after", 0.05),
             "joint_before": joint_pair(work, "J1_before", 0.004, 0.0015), "joint_after": joint_pair(work, "J1_after", 0.001, 0.0004),
             "faro": faro_csvs(work, args.analysis_url), "toolcalib": toolcalib_csv(work, args.analysis_url),
+            "trajectory": trajectory_pairs(work, args.analysis_url),
         }
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 800}, accept_downloads=True)

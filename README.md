@@ -19,7 +19,7 @@ robot-calibration-app/
 ├── frontend/                 # NiceGUI（画面）。描画 API・解析 API を HTTP で呼び出す
 │   ├── main.py               # 起動。/ は /draw へ移動
 │   ├── draw.py               # 描画ページ /draw（姿勢精度・軌跡精度・単軸）
-│   ├── analysis.py           # 解析ページ /analysis（キネマ補正・関節補正・ツール補正）
+│   ├── analysis.py           # 解析ページ /analysis（キネマ補正・軌跡キャリブ・関節補正・ツール補正）
 │   ├── layout.py             # 共通のヘッダー・ファイル選択・グラフ表示
 │   ├── api.py                # 描画 API・解析 API の呼び出し
 │   ├── loaders.py            # 計測 CSV → API の入力形式への変換
@@ -59,6 +59,7 @@ frontend から各 API への接続先は環境変数 `DRAW_URL`（デフォル�
 | | 軌跡精度 | 系列ごとに `*_BT.csv` と `*_FM.csv` の組 |
 | | 単軸 | 系列ごとに `*_FM.csv` と `*_BT.csv` の組（複数区間なら複数組） |
 | 解析 `/analysis` | キネマ補正 | FARO の CSV（J1〜J6、RobotXYZ、MeasureXYZ、ToolID）。同定パターンで関節の伝達誤差（周期は機種 JSON の `TransErrPeriod`）も同時に推定できる。保存したパラメータ JSON で評価・学習の初期値にもできる |
+| | 軌跡キャリブ | 動作ごとに `*_FM.csv`（関節角の軌道）と `*_BT.csv`（計測器の手先軌跡）の組。キネマ・伝達誤差に加え、動作ごとの時刻ずれと計測器の座標も推定する |
 | | 関節補正 | `*_FM.csv` と `*_BT.csv` の組 |
 | | ツール補正 | RobotXYZUVW、MeasureXYZ、ToolID の CSV |
 
