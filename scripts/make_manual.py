@@ -23,6 +23,7 @@ from playwright.sync_api import Locator, Page, sync_playwright
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "manual" / "img"
 rng = random.Random(0)  # 撮り直しても同じ画像になるよう乱数を固定する
+TOOL_OFFSET = [60.0, 0.0, 120.0]  # キネマ補正のダミーデータの工具オフセット [mm]
 
 
 def api(url: str, path: str, body: dict | None = None):
@@ -81,14 +82,18 @@ def joint_pair(folder: Path, stem: str, a1: float, a2: float) -> list[Path]:
             write_csv(folder / f"{stem}_BT.csv", ["TIMESTAMP", "#X(mm)", "Y(mm)", "Z(mm)"], bt, pre=[["FARO dummy"]])]
 
 
-# 公称パラメータで指令位置を、幾何誤差を乗せたパラメータで計測位置を作る（解析 API の R6E モデルを使う）
+# 公称パラメータで指令位置を、幾何誤差と関節の伝達誤差を乗せたパラメータで計測位置を作る（解析 API の R6E モデルを使う）
 def faro_csvs(folder: Path, analysis_url: str) -> list[Path]:
     joints = [[rng.uniform(-60, 60), rng.uniform(-20, 40), rng.uniform(-20, 40), rng.uniform(-90, 90), rng.uniform(-60, 60), rng.uniform(-90, 90)] for _ in range(120)]
     X = [j + [1] for j in joints]
-    api(analysis_url, "/init", {"model_type": "kinema", "settings": {"robot_type": "R6E"}})
+    # 工具が J6 軸上にあると J6 の伝達誤差が位置に現れないため、軸から外したオフセットにする（画面にも同じ値を入れる）
+    api(analysis_url, "/init", {"model_type": "kinema_joint", "settings": {"robot_type": "R6E", "tool_offsets": [TOOL_OFFSET]}})
     robot = api(analysis_url, "/predict", {"X": X})["predictions"]
     params = api(analysis_url, "/save")
-    params["GeomErr"] = [[rng.gauss(0, s) for s in (0.2, 0.2, 0.2, 0.0005, 0.0005, 0.0005)] for _ in params["GeomErr"]]
+    params["robot_model"]["GeomErr"] = [[rng.gauss(0, s) for s in (0.2, 0.2, 0.2, 0.0005, 0.0005, 0.0005)] for _ in params["robot_model"]["GeomErr"]]
+    for wave in params["transmission_error"].values():
+        wave["amplitudes"] = [rng.uniform(0.001, 0.004) for _ in wave["periods"]]
+        wave["offsets"] = [rng.uniform(-180, 180) for _ in wave["periods"]]
     api(analysis_url, "/load", params)
     measure = api(analysis_url, "/predict", {"X": X})["predictions"]
     header = [f"J{j}" for j in range(1, 7)] + ["RobotX", "RobotY", "RobotZ", "MeasureX", "MeasureY", "MeasureZ", "ToolID"]
@@ -205,38 +210,57 @@ def analysis_page(m: Manual, data: dict, work: Path):
     note = page.get_by_text("学習済みモデルを 1 つだけ保持")
     m.shot("13_analysis_note", note)
 
-    # キネマ補正：機種・モード → 荷重・工具 → CSV と学習 → 結果 → 保存 → 保存済みパラメータで評価
+    # キネマ補正：機種・モード → 同定パターン → 荷重・工具 → CSV と学習 → 結果 → 保存 → 保存済みパラメータで評価
     m.field("calibration_mode").click()
     m.shot("14_kinema_mode", m.field("機種"), m.field("mode"), m.field("calibration_mode"), page.locator(".q-menu"))
     page.keyboard.press("Escape")
-    m.shot("15_kinema_payload", page.locator(".q-field").filter(has_text=re.compile("質量|重心|重力")), page.locator(".q-textarea"), top=m.field("機種"))
+    m.field("同定パターン").click()
+    m.shot("15_kinema_pattern", m.field("同定パターン"), page.locator(".q-menu"))
+    page.keyboard.press("Escape")
+    page.locator(".q-textarea textarea").fill(", ".join(f"{v:g}" for v in TOOL_OFFSET))
+    m.shot("16_kinema_payload", page.locator(".q-field").filter(has_text=re.compile("質量|重心|重力")), page.locator(".q-textarea"), top=m.field("機種"))
     chips = m.upload(0, data["faro"])
-    m.shot("16_kinema_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.locator(".q-textarea"))
+    m.shot("17_kinema_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.locator(".q-textarea"))
     m.run(m.button("学習"))
-    m.shot("17_kinema_result", page.locator(".q-img:visible"), page.get_by_text("R² ="), top=page.locator(".q-img:visible"))
+    m.shot("18_kinema_result", page.locator(".q-img:visible"), page.get_by_text("R² ="), top=page.locator(".q-img:visible"))
     with page.expect_download() as download:
         m.button("パラメータを保存").click()
     params = work / download.value.suggested_filename
     download.value.save_as(params)
-    m.shot("18_save_param", m.button("パラメータを保存"))
+    m.shot("19_save_param", m.button("パラメータを保存"))
     page.get_by_text("保存済みパラメータで評価する").click()
     chips = m.upload(1, [params])
     m.run(m.button("読み込んで評価"))
-    m.shot("19_load_param", page.get_by_text("保存済みパラメータで評価する"), chips, m.button("読み込んで評価"), top=m.button("学習"))
+    m.shot("20_load_param", page.get_by_text("保存済みパラメータで評価する"), chips, m.button("読み込んで評価"), top=m.button("学習"))
+
+    # キネマ＋伝達誤差：パターンを選んで学習 → 補正の効果 → 振幅・位相の表
+    m.field("同定パターン").click()
+    page.get_by_role("option", name="キネマ＋伝達誤差 全軸（同時）").click()
+    m.shot("21_joint_kinema_train", m.field("同定パターン"), m.button("学習"), top=m.field("機種"))
+    m.run(m.button("学習"))
+    m.shot("22_joint_kinema_result", page.locator(".q-img:visible"), page.get_by_text("R² ="), top=page.locator(".q-img:visible"))
+    m.shot("23_joint_kinema_table", page.locator(".q-table__container:visible"))
+
+    # 保存済みのキネマ（キネマのみで学習したもの）を固定して、伝達誤差だけを同定する
+    m.field("同定パターン").click()
+    page.get_by_role("option", name="伝達誤差 全軸", exact=True).click()
+    page.get_by_text("このパラメータを学習の初期値にする").click()
+    m.shot("24_trans_only", m.button("学習"), page.locator(".q-expansion-item .q-chip"), page.locator(".q-checkbox"), top=m.button("学習"))
+    m.run(m.button("学習"))
 
     # 関節補正：軸・減速比・maxfev → FM/BT の組 → 学習 → 補正前後のグラフと周期成分の表
     m.tab("関節補正")
     chips = m.upload(0, data["joint_before"])
-    m.shot("20_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
+    m.shot("25_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
     m.run(m.button("学習"))
-    m.shot("21_joint_result", page.locator(".q-table__container:visible"))
+    m.shot("26_joint_result", page.locator(".q-table__container:visible"))
 
     # ツール補正：CSV → 学習 → RMSE と工具オフセットの表
     m.tab("ツール補正")
     chips = m.upload(0, [data["toolcalib"]])
-    m.shot("22_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("27_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
     m.run(m.button("学習"))
-    m.shot("23_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("28_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
 
     # エラー表示の例：関節補正で BT を入れ忘れた場合
     page.reload()
@@ -244,7 +268,7 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.upload(0, [data["joint_before"][0]])
     m.button("学習").click()
     page.locator(".q-notification").wait_for()
-    m.shot("24_error", page.locator(".q-notification"))
+    m.shot("29_error", page.locator(".q-notification"))
 
 
 def main():

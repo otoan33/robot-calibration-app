@@ -58,7 +58,7 @@ frontend から各 API への接続先は環境変数 `DRAW_URL`（デフォル�
 | 描画 `/draw` | 姿勢精度 | 系列ごとに Robot/Measure の CSV |
 | | 軌跡精度 | 系列ごとに `*_BT.csv` と `*_FM.csv` の組 |
 | | 単軸 | 系列ごとに `*_FM.csv` と `*_BT.csv` の組（複数区間なら複数組） |
-| 解析 `/analysis` | キネマ補正 | FARO の CSV（J1〜J6、RobotXYZ、MeasureXYZ、ToolID）。保存したパラメータ JSON で評価もできる |
+| 解析 `/analysis` | キネマ補正 | FARO の CSV（J1〜J6、RobotXYZ、MeasureXYZ、ToolID）。同定パターンで関節の伝達誤差（周期は機種 JSON の `TransErrPeriod`）も同時に推定できる。保存したパラメータ JSON で評価・学習の初期値にもできる |
 | | 関節補正 | `*_FM.csv` と `*_BT.csv` の組 |
 | | ツール補正 | RobotXYZUVW、MeasureXYZ、ToolID の CSV |
 

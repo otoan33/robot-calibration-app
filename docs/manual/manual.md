@@ -49,7 +49,7 @@ style: |
 | 描画 | 姿勢精度 | 計測点ごとの位置誤差を Before/After で比べる |
 | | 軌跡精度 | 直線軌跡の横ずれを比べる |
 | | 単軸 | 1 軸の角度伝達誤差とその周波数成分を見る |
-| 解析 | キネマ補正 | 機構パラメータを推定し、補正前後の精度を示す |
+| 解析 | キネマ補正 | 機構パラメータと関節の伝達誤差を推定し、補正前後の精度を示す |
 | | 関節補正 | 減速機の周期誤差（振幅・位相）を推定する |
 | | ツール補正 | 工具オフセットを推定する |
 
@@ -208,9 +208,19 @@ style: |
 
 ---
 
-## 15. 荷重と工具を入力する
+## 15. 同定パターンを選ぶ
 
-![bg right:64% contain](img/15_kinema_payload.png)
+![bg right:64% contain](img/15_kinema_pattern.png)
+
+- **同定パターン** で推定する対象を選ぶ
+- 伝達誤差：関節ごとの周期的な角度誤差（周期は機種で固定、振幅・位相を推定）
+- 「同時」は一度に、「2 段階」はキネマの後に伝達誤差を推定。ideal では「キネマのみ」
+
+---
+
+## 16. 荷重と工具を入力する
+
+![bg right:64% contain](img/16_kinema_payload.png)
 
 - 計測時の **可搬質量・重心・重力方向** を入れる
 - **工具オフセット** は 1 行に 1 工具（x, y, z）
@@ -218,19 +228,19 @@ style: |
 
 ---
 
-## 16. CSV を入れて学習する
+## 17. CSV を入れて学習する
 
-![bg right:64% contain](img/16_kinema_train.png)
+![bg right:64% contain](img/17_kinema_train.png)
 
-- FARO の計測 CSV を入れる（複数ファイル可）
+- 同定パターンは「キネマのみ」のまま、FARO の計測 CSV を入れる（複数可）
 - **学習** を押す。ボタンが回っている間は待つ
 - 学習には数十秒〜数分かかる
 
 ---
 
-## 17. 補正の効果を確認する
+## 18. 補正の効果を確認する
 
-![bg right:64% contain](img/17_kinema_result.png)
+![bg right:64% contain](img/18_kinema_result.png)
 
 - Before：計測 − 指令位置、After：計測 − 補正モデル
 - 棒グラフで平均・最大誤差を比べる
@@ -238,9 +248,9 @@ style: |
 
 ---
 
-## 18. パラメータを保存する
+## 19. パラメータを保存する
 
-![bg right:64% contain](img/18_save_param.png)
+![bg right:64% contain](img/19_save_param.png)
 
 - **パラメータを保存** で JSON をダウンロードする
 - ファイル名は `kinema_機種.json`
@@ -248,9 +258,9 @@ style: |
 
 ---
 
-## 19. 保存済みパラメータで評価する
+## 20. 保存済みパラメータで評価する
 
-![bg right:64% contain](img/19_load_param.png)
+![bg right:64% contain](img/20_load_param.png)
 
 - **保存済みパラメータで評価する** を開き、JSON を入れる
 - **読み込んで評価** を押すと、学習せずに補正後の精度が出る
@@ -258,11 +268,51 @@ style: |
 
 ---
 
+## 21. キネマと伝達誤差を同時に推定する
+
+![bg right:64% contain](img/21_joint_kinema_train.png)
+
+- **同定パターン** で「キネマ＋伝達誤差 全軸（同時）」を選ぶ
+- CSV はそのままで **学習** を押す
+- J1 だけを見たいときは「キネマ＋伝達誤差 J1（同時）」を選ぶ
+
+---
+
+## 22. 伝達誤差の補正効果を確認する
+
+![bg right:64% contain](img/22_joint_kinema_result.png)
+
+- **グラフ** の見方は「キネマのみ」と同じ
+- 伝達誤差も補正した分、After の平均・最大が「キネマのみ」より小さくなる
+- 例：平均 0.043 → 0.015 mm
+
+---
+
+## 23. 伝達誤差の推定結果を見る
+
+![bg right:64% contain](img/23_joint_kinema_table.png)
+
+- **表** に軸・周期ごとの振幅 [deg] と位相 [deg] が出る
+- 推定しなかった軸は 0 のまま
+- 工具オフセットが J6 軸上（0, 0, z）だと、J6 は正しく求まらない
+
+---
+
+## 24. キネマを固定して伝達誤差だけを推定する
+
+![bg right:64% contain](img/24_trans_only.png)
+
+- 同定パターンで「伝達誤差 全軸」（または J1）を選ぶ
+- 保存済みのキネマ JSON を入れ、**このパラメータを学習の初期値にする** にチェックして **学習**
+- チェックがないと公称値から始まり、キネマの誤差が残る
+
+---
+
 <!-- header: 解析ページ｜関節補正 -->
 
-## 20. 関節補正を学習する
+## 25. 関節補正を学習する
 
-![bg right:64% contain](img/20_joint_train.png)
+![bg right:64% contain](img/25_joint_train.png)
 
 - **関節補正** タブで **軸・減速比** を選ぶ
 - `*_FM.csv` と `*_BT.csv` の組を入れて **学習**
@@ -270,9 +320,9 @@ style: |
 
 ---
 
-## 21. 周期誤差の推定結果
+## 26. 周期誤差の推定結果
 
-![bg right:64% contain](img/21_joint_result.png)
+![bg right:64% contain](img/26_joint_result.png)
 
 - グラフ：補正前後の誤差と周波数成分
 - 表：減速比の 1 次・2 次の **周期・振幅・位相**
@@ -282,9 +332,9 @@ style: |
 
 <!-- header: 解析ページ｜ツール補正 -->
 
-## 22. ツール補正を学習する
+## 27. ツール補正を学習する
 
-![bg right:64% contain](img/22_tool_train.png)
+![bg right:64% contain](img/27_tool_train.png)
 
 - **ツール補正** タブで計測 CSV を入れて **学習**
 - 列：`RobotX/Y/Z/U/V/W`、`MeasureX/Y/Z`、`ToolID`
@@ -292,9 +342,9 @@ style: |
 
 ---
 
-## 23. 工具オフセットを確認する
+## 28. 工具オフセットを確認する
 
-![bg right:64% contain](img/23_tool_result.png)
+![bg right:64% contain](img/28_tool_result.png)
 
 - **相対 RMSE** の補正前 → 補正後で効果を見る
 - 表が推定した工具ごとのオフセット [mm]
@@ -304,9 +354,9 @@ style: |
 
 <!-- header: 困ったとき -->
 
-## 24. エラーが出たとき
+## 29. エラーが出たとき
 
-![bg right:64% contain](img/24_error.png)
+![bg right:64% contain](img/29_error.png)
 
 - 失敗すると画面下に **赤い通知** が出る
 - よくある原因：FM/BT の片方がない、組の名前が合っていない、列名が違う
