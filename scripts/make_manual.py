@@ -244,23 +244,34 @@ def analysis_page(m: Manual, data: dict, work: Path):
     # 保存済みのキネマ（キネマのみで学習したもの）を固定して、伝達誤差だけを同定する
     m.field("同定パターン").click()
     page.get_by_role("option", name="伝達誤差 全軸", exact=True).click()
-    page.get_by_text("このパラメータを学習の初期値にする").click()
-    m.shot("24_trans_only", m.button("学習"), page.locator(".q-expansion-item .q-chip"), page.locator(".q-checkbox"), top=m.button("学習"))
+    start_from_loaded = page.locator(".q-checkbox").filter(has_text="このパラメータを学習の初期値にする")
+    start_from_loaded.click()
+    m.shot("24_trans_only", m.button("学習"), page.locator(".q-expansion-item .q-chip"), start_from_loaded, top=m.button("学習"))
     m.run(m.button("学習"))
+
+    # ベイズ推定：キネマのみを公称値から推定し、パラメータごとの MAP 値と事後 σ を見る
+    start_from_loaded.click()
+    m.field("同定パターン").click()
+    page.get_by_role("option", name="キネマのみ").click()
+    bayes = page.locator(".q-checkbox").filter(has_text="ベイズ推定")
+    bayes.click()
+    m.shot("25_bayes_settings", bayes, page.locator(".q-field:visible").filter(has_text=re.compile("事前 σ|観測ノイズ")), m.button("学習"), top=m.field("機種"))
+    m.run(m.button("学習"))
+    m.shot("26_bayes_result", page.get_by_text("観測ノイズ σ ="), page.locator(".q-table__container:visible"), top=page.get_by_text("R² ="))
 
     # 関節補正：軸・減速比・maxfev → FM/BT の組 → 学習 → 補正前後のグラフと周期成分の表
     m.tab("関節補正")
     chips = m.upload(0, data["joint_before"])
-    m.shot("25_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
+    m.shot("27_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
     m.run(m.button("学習"))
-    m.shot("26_joint_result", page.locator(".q-table__container:visible"))
+    m.shot("28_joint_result", page.locator(".q-table__container:visible"))
 
     # ツール補正：CSV → 学習 → RMSE と工具オフセットの表
     m.tab("ツール補正")
     chips = m.upload(0, [data["toolcalib"]])
-    m.shot("27_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("29_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
     m.run(m.button("学習"))
-    m.shot("28_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("30_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
 
     # エラー表示の例：関節補正で BT を入れ忘れた場合
     page.reload()
@@ -268,7 +279,7 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.upload(0, [data["joint_before"][0]])
     m.button("学習").click()
     page.locator(".q-notification").wait_for()
-    m.shot("29_error", page.locator(".q-notification"))
+    m.shot("31_error", page.locator(".q-notification"))
 
 
 def main():

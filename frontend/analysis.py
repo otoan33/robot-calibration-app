@@ -31,6 +31,12 @@ def kinema_panel():
     with ui.row().classes("items-center"):
         payload = [ui.number(label, value=0.0).classes("w-28") for label in ("可搬質量 [kg]", "重心 X [mm]", "重心 Y [mm]", "重心 Z [mm]")]
         gravity = [ui.number(f"重力方向 {axis}", value=value).classes("w-28") for axis, value in zip("XYZ", (0.0, 0.0, -1.0))]
+    # ベイズ推定（ラプラス近似）に切り替えると、事前分布の σ と観測ノイズ σ を指定できる
+    bayes = ui.checkbox("ベイズ推定（ラプラス近似。パラメータの事後標準偏差も求める）")
+    with ui.row().classes("items-center").bind_visibility_from(bayes, "value"):
+        prior_std = {key: ui.number(label, value=value).classes("w-32") for key, label, value in (
+            ("length", "事前 σ 長さ [mm]", 1.0), ("angle", "事前 σ 角度 [deg]", 0.1), ("stiffness_rate", "事前 σ 剛性率", 0.5), ("trans", "事前 σ 伝達誤差 [deg]", 0.01))}
+        noise_std = ui.number("観測ノイズ σ [mm]（空欄=自動）", value=None).classes("w-72")
     tool_offsets = ui.textarea("工具オフセット [mm]（1 行に 1 工具で x, y, z。ToolID=1 が 1 行目）", value="0, 0, 0").classes("w-full")
     csv_files: dict[str, bytes] = {}
     param_files: dict[str, bytes] = {}
@@ -42,6 +48,7 @@ def kinema_panel():
             "payload_mass": payload[0].value, "payload_center": [n.value for n in payload[1:]],
             "gravity_direction": [n.value for n in gravity],
             "tool_offsets": [[float(v) for v in line.split(",")] for line in tool_offsets.value.splitlines() if line.strip()],
+            "bayes": bayes.value, "prior_std": {key: n.value for key, n in prior_std.items()}, "noise_std": noise_std.value or None,
         }
 
     # キネマのみは従来の kinema モデル、伝達誤差を含むパターンは kinema_joint モデルで学習する
@@ -63,6 +70,11 @@ def kinema_panel():
             if "transmission_error" in saved:
                 ui.table(columns=[{"name": k, "label": label, "field": k} for k, label in (("joint", "軸"), ("period", "周期 [deg]"), ("amplitude", "振幅 [deg]"), ("offset", "位相 [deg]"))],
                          rows=[{"joint": joint, "period": f"{p:.4f}", "amplitude": f"{a:.6f}", "offset": f"{o:.2f}"} for joint, wave in saved["transmission_error"].items() for p, a, o in zip(wave["periods"], wave["amplitudes"], wave["offsets"])])
+            # ベイズ推定では、推定したパラメータごとの MAP 値と事後標準偏差を示す（σ が事前 σ に近いものはデータから同定できていない）
+            if "posterior" in saved:
+                ui.label(f"観測ノイズ σ = {saved['posterior']['noise_std']:.6f} mm")
+                ui.table(columns=[{"name": k, "label": label, "field": k} for k, label in (("name", "パラメータ"), ("mean", "MAP 値"), ("std", "事後 σ"))],
+                         rows=[{"name": name, "mean": f"{v['mean']:.6g}", "std": f"{v['std']:.3g}"} for name, v in saved["posterior"]["parameters"].items()], row_key="name").props("dense")
 
     async def train():
         joints, _, positions, tool_ids = loaders.load_faro(list(csv_files.values()))

@@ -37,7 +37,9 @@ class KinemaJointModel(KinemaModel):
         self.transmission = TransmissionError(self.params.trans_err_periods)
 
     # 段階ごとに推定対象を切り替えて、KinemaModel の同時最小二乗を順に行う
+    # （ベイズ推定では、後段の事後分布は前段で推定した値に固定した条件付きのものになる）
     def fit(self, X: Any, y: Any) -> "KinemaJointModel":
+        self.posterior_ = {}
         for use_kinema, joints in self.stages:
             self.kinema.set_calibration_mode(self.kinema_mode if use_kinema else "none")
             self.transmission.joints = list(joints)
@@ -45,7 +47,7 @@ class KinemaJointModel(KinemaModel):
         return self
 
     def save(self) -> dict[str, Any]:
-        return {"robot_model": self._save_robot(), "transmission_error": self.transmission.save(), "observation_model": {"type": observation_type(self.observation), "parameters": self.observation.save()}}
+        return self._with_posterior({"robot_model": self._save_robot(), "transmission_error": self.transmission.save(), "observation_model": {"type": observation_type(self.observation), "parameters": self.observation.save()}})
 
     # キネマのみの保存ファイルも読めるよう、伝達誤差はあるときだけ反映する
     def load(self, parameters: dict[str, Any]) -> None:

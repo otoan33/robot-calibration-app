@@ -308,11 +308,31 @@ style: |
 
 ---
 
+## 25. ベイズ推定で学習する
+
+![bg right:64% contain](img/25_bayes_settings.png)
+
+- **ベイズ推定** にチェックすると、パラメータの不確かさも求める
+- **事前 σ**：開始時の値から動いてよい幅。**観測ノイズ σ** は空欄で自動
+- **学習** を押す（チェックなしは従来どおり）
+
+---
+
+## 26. 事後 σ を確認する
+
+![bg right:64% contain](img/26_bayes_result.png)
+
+- **観測ノイズ σ** と、パラメータごとの **MAP 値・事後 σ の表** が出る
+- 事後 σ が事前 σ とほぼ同じパラメータは、データから同定できていない
+- 保存 JSON には `posterior` として入る（読み込み時は無視される）
+
+---
+
 <!-- header: 解析ページ｜関節補正 -->
 
-## 25. 関節補正を学習する
+## 27. 関節補正を学習する
 
-![bg right:64% contain](img/25_joint_train.png)
+![bg right:64% contain](img/27_joint_train.png)
 
 - **関節補正** タブで **軸・減速比** を選ぶ
 - `*_FM.csv` と `*_BT.csv` の組を入れて **学習**
@@ -320,9 +340,9 @@ style: |
 
 ---
 
-## 26. 周期誤差の推定結果
+## 28. 周期誤差の推定結果
 
-![bg right:64% contain](img/26_joint_result.png)
+![bg right:64% contain](img/28_joint_result.png)
 
 - グラフ：補正前後の誤差と周波数成分
 - 表：減速比の 1 次・2 次の **周期・振幅・位相**
@@ -332,9 +352,9 @@ style: |
 
 <!-- header: 解析ページ｜ツール補正 -->
 
-## 27. ツール補正を学習する
+## 29. ツール補正を学習する
 
-![bg right:64% contain](img/27_tool_train.png)
+![bg right:64% contain](img/29_tool_train.png)
 
 - **ツール補正** タブで計測 CSV を入れて **学習**
 - 列：`RobotX/Y/Z/U/V/W`、`MeasureX/Y/Z`、`ToolID`
@@ -342,9 +362,9 @@ style: |
 
 ---
 
-## 28. 工具オフセットを確認する
+## 30. 工具オフセットを確認する
 
-![bg right:64% contain](img/28_tool_result.png)
+![bg right:64% contain](img/30_tool_result.png)
 
 - **相対 RMSE** の補正前 → 補正後で効果を見る
 - 表が推定した工具ごとのオフセット [mm]
@@ -354,9 +374,9 @@ style: |
 
 <!-- header: 困ったとき -->
 
-## 29. エラーが出たとき
+## 31. エラーが出たとき
 
-![bg right:64% contain](img/29_error.png)
+![bg right:64% contain](img/31_error.png)
 
 - 失敗すると画面下に **赤い通知** が出る
 - よくある原因：FM/BT の片方がない、組の名前が合っていない、列名が違う
