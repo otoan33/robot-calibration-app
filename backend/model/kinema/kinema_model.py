@@ -80,8 +80,8 @@ class KinemaModel(BaseModel):
             "cost": float(result.cost), "nfev": int(result.nfev),
             "parameters": self._parameter_map(result.x, robot_count, tool_parameter_indices),
         }
-        # 収束しなかった結果を使わないよう、失敗は呼び出し側へ知らせる
-        if not result.success:
+        # 収束しなかった結果を使わないよう、失敗は呼び出し側へ知らせる（max_nfev で打ち切った場合は、逐次最適化で続きから推定するため使う）
+        if not result.success and result.status != 0:
             raise RuntimeError(f"kinematic calibration failed: {result.message}")
         return self
 

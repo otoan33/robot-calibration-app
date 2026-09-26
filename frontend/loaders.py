@@ -19,13 +19,17 @@ def pair_files(files: dict[str, bytes]) -> list[tuple[bytes, bytes]]:
     return [(fm, bt) for _, fm, bt in named_pairs(files)]
 
 
+def load_fm(fm_data: bytes) -> tuple[np.ndarray, np.ndarray]:
+    """FM（関節角の軌道）から ``(時刻 s, 関節角 (N, 6))`` を返す（2 行目までがヘッダー前の情報で、末尾 2 行が集計行）。"""
+    fm = read_csv(fm_data, skiprows=2, encoding="shift-jis", low_memory=False).iloc[:-2]
+    return fm.iloc[:, 0].to_numpy(dtype=np.float64) / 1000.0, fm[[f"Joint(J{joint})[deg]" for joint in range(1, 7)]].to_numpy(dtype=np.float64)
+
+
 def load_trajectory_pair(fm_data: bytes, bt_data: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """FM（関節角の軌道）と BT（計測器の手先軌跡）の組から、``(FM 時刻 s, 関節角 (N, 6), BT 時刻 s, 計測 XYZ (M, 3))`` を返す。"""
-    # 読み方は単軸の joint_wave と同じ（FM は 2 行目までがヘッダー前の情報で末尾 2 行が集計行、BT は 1 行目がヘッダー前の情報）
-    fm = read_csv(fm_data, skiprows=2, encoding="shift-jis", low_memory=False).iloc[:-2]
+    # 読み方は単軸の joint_wave と同じ（BT は 1 行目がヘッダー前の情報）
     bt = read_csv(bt_data, skiprows=1, encoding="shift-jis", low_memory=False)
-    return (fm.iloc[:, 0].to_numpy(dtype=np.float64) / 1000.0, fm[[f"Joint(J{joint})[deg]" for joint in range(1, 7)]].to_numpy(dtype=np.float64),
-            bt["TIMESTAMP"].to_numpy(dtype=np.float64) / 1000.0, bt[["#X(mm)", "Y(mm)", "Z(mm)"]].to_numpy(dtype=np.float64))
+    return (*load_fm(fm_data), bt["TIMESTAMP"].to_numpy(dtype=np.float64) / 1000.0, bt[["#X(mm)", "Y(mm)", "Z(mm)"]].to_numpy(dtype=np.float64))
 
 
 # 計測座標をロボット座標へ最もよく重なるよう剛体変換する（Kabsch 法）。計測器の設置位置の違いを除いて比較するため

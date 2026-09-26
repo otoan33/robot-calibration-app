@@ -73,6 +73,26 @@ def evaluate(request: EvaluateRequest):
     return {"score": float(model.score(request.X_test, request.y_test))}
 
 
+class CorrectRequest(BaseModel):
+    time: list[float]
+    joints: list[list[float]]
+    error_time: list[float]
+    errors: list[list[float]]
+    gain: float = 1.0
+
+
+# 逐次最適化（trajectory モデル）：計測をロボット座標に直した目標軌跡との誤差
+@app.post("/tracking_error")
+def tracking_error(request: EvaluateRequest):
+    return model.tracking_error(request.X_test, request.y_test)
+
+
+# 逐次最適化（trajectory モデル）：誤差を打ち消すよう指令関節角の軌道を修正する
+@app.post("/correct")
+def correct(request: CorrectRequest):
+    return {"joints": model.correct(**request.model_dump()).tolist()}
+
+
 # exe のランチャーから別プロセスで起動するための入口（pickle できるようモジュール直下に置く）
 def serve(port: int):
     uvicorn.run(app, host="127.0.0.1", port=port)

@@ -3,6 +3,8 @@ from typing import Any
 
 import numpy as np
 
+from ..util.Rotation import TransEulerZYXToRot
+from .compensation import position_jacobian
 from .input import KinemaInput
 from .kinema_joint_model import KinemaJointModel
 from .tool import apply_tool_offsets
@@ -17,12 +19,16 @@ class TrajectoryCalibModel(KinemaJointModel):
     ``trajectories`` は動作ごとの関節角軌道 ``[{"time": [s], "joints": [[J1..J6], ...]}]``。
     ``X`` は計測点の ``[sequence_id（trajectories の番号）, 計測時刻 s]``、``y`` は計測器座標の XYZ [mm]。
     ロボットの時刻 = 計測時刻 + 時刻ずれ（動作ごと）とし、時刻ずれと計測器の座標（rigid）はどの段階でも推定する。
+    ``target`` は逐次最適化で目標とする関節角軌道 ``{"time", "joints"}``（公称キネマでの手先軌跡を目標にする）。
     """
 
     TRAIN_PATTERNS = {"time_only": [(False, ())], **KinemaJointModel.TRAIN_PATTERNS}
 
-    def __init__(self, trajectories: list[dict[str, Any]] = (), **settings: Any) -> None:
+    def __init__(self, trajectories: list[dict[str, Any]] = (), target: dict[str, Any] | None = None, **settings: Any) -> None:
         super().__init__(**{**settings, "observation_model": "rigid"})
+        # 目標の手先位置と軌道修正のヤコビアンは、同定で動かない公称キネマで計算する
+        self.nominal = KinemaJointModel(**{**settings, "pattern": "kinema_only"})
+        self.target = target and (np.asarray(target["time"], dtype=np.float64), np.asarray(target["joints"], dtype=np.float64))
         self.trajectories = [(np.asarray(item["time"], dtype=np.float64), np.asarray(item["joints"], dtype=np.float64)) for item in trajectories]
         # 最適化では初期値からの補正量だけを動かす（絶対時刻でも数値微分の刻みが大きくならないように）
         self.time_base = np.zeros(len(self.trajectories), dtype=np.float64)
@@ -35,6 +41,23 @@ class TrajectoryCalibModel(KinemaJointModel):
 
     def save(self) -> dict[str, Any]:
         return {**super().save(), "time_offsets_ms": (self.time_offsets * 1000.0).tolist()}
+
+    def tracking_error(self, X: Any, y: Any) -> dict[str, list]:
+        """計測 XYZ をロボット座標・ロボット時刻へ直した値と、目標軌跡との差（計測 − 目標）を返す（目標の時間範囲外の点は除く）。"""
+        data = self._parse(X)
+        time = data.times + self.time_offsets[data.sequence_ids]
+        inside = (self.target[0][0] <= time) & (time <= self.target[0][-1])
+        transform = self.observation.transform_
+        measured = (np.asarray(y, dtype=np.float64).reshape(-1, 3)[inside] - transform[:3]) @ TransEulerZYXToRot(transform[3:])
+        target = self.nominal.predict_positions(np.column_stack([np.interp(time[inside], self.target[0], values) for values in self.target[1].T]))
+        return {"time": time[inside].tolist(), "measured": measured.tolist(), "errors": (measured - target).tolist()}
+
+    def correct(self, time: Any, joints: Any, error_time: Any, errors: Any, gain: float) -> np.ndarray:
+        """指令関節角の軌道を、手先の誤差を打ち消す向きに修正する（公称キネマの位置ヤコビアンの擬似逆行列を使う）。"""
+        joints = np.asarray(joints, dtype=np.float64)
+        errors = np.column_stack([np.interp(time, error_time, values) for values in np.asarray(errors, dtype=np.float64).T])
+        jacobian = position_jacobian(self.nominal.predict_positions, joints)
+        return joints - gain * np.einsum("nij,nj->ni", np.linalg.pinv(jacobian), errors)
 
     # キネマと伝達誤差だけを反映する（座標と時刻ずれはデータごとに fit で推定し直す）
     def load(self, parameters: dict[str, Any]) -> None:

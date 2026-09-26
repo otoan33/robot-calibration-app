@@ -20,3 +20,14 @@ async def analysis(path: str, body: dict | None = None) -> dict:
     response = await analysis_client.post(path, json=body or {})
     response.raise_for_status()
     return response.json()
+
+
+# ロボット API（実機またはシミュレータ）。動作と計測に時間がかかるためタイムアウトしない
+robot_client = httpx.AsyncClient(base_url=os.environ.get("ROBOT_URL", "http://127.0.0.1:8002"), timeout=None)
+
+
+async def robot(path: str, body: dict | None = None) -> dict:
+    """ロボット API（GET /info、POST /parameters, /run）を呼ぶ。body が無ければ GET にする。"""
+    response = await (robot_client.get(path) if body is None else robot_client.post(path, json=body))
+    response.raise_for_status()
+    return response.json()

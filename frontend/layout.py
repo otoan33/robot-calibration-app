@@ -15,6 +15,7 @@ def header():
         ui.label("robot-calibration").classes("text-lg font-bold")
         ui.link("描画", "/draw").classes("text-white")
         ui.link("解析", "/analysis").classes("text-white")
+        ui.link("逐次最適化", "/optimize").classes("text-white")
 
 
 def file_upload(files: dict[str, bytes], label: str):

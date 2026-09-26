@@ -10,10 +10,10 @@
 	"workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
 	"workspaceFolder": "/workspace",
 
-	// 描画 API・解析 API（--reload 付き）と frontend を起動（ログは /tmp/backend.log, /tmp/analysis.log, /tmp/frontend.log）
-	"postStartCommand": "nohup uvicorn backend.draw:app --host 0.0.0.0 --port 8000 --reload > /tmp/backend.log 2>&1 & nohup uvicorn backend.analysis:app --host 0.0.0.0 --port 8001 --reload > /tmp/analysis.log 2>&1 & nohup python -m frontend.main > /tmp/frontend.log 2>&1 &",
+	// 描画 API・解析 API（--reload 付き）・ロボットシミュレータと frontend を起動（ログは /tmp/backend.log, /tmp/analysis.log, /tmp/robot_sim.log, /tmp/frontend.log）
+	"postStartCommand": "nohup uvicorn backend.draw:app --host 0.0.0.0 --port 8000 --reload > /tmp/backend.log 2>&1 & nohup uvicorn backend.analysis:app --host 0.0.0.0 --port 8001 --reload > /tmp/analysis.log 2>&1 & nohup uvicorn backend.robot_sim:app --host 0.0.0.0 --port 8002 > /tmp/robot_sim.log 2>&1 & nohup python -m frontend.main > /tmp/frontend.log 2>&1 &",
 
-	"forwardPorts": [8000, 8001, 8080],
+	"forwardPorts": [8000, 8001, 8002, 8080],
 
 	"customizations": {
 		"vscode": {

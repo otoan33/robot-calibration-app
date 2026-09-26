@@ -1,7 +1,7 @@
 from nicegui import ui
 
 # 各ページは import 時に @ui.page で登録される
-from . import analysis, draw  # noqa: F401
+from . import analysis, draw, optimize  # noqa: F401
 
 
 # トップページは描画ページへ移動する

@@ -23,16 +23,17 @@ TRAIN_PATTERNS = {
 TRAJECTORY_PATTERNS = {"time_only": "時刻・座標のみ", **TRAIN_PATTERNS}
 
 
-def payload_inputs():
-    """可搬物・重力方向・工具オフセットの入力欄を置き、モデル設定の辞書を返す関数を返す（キネマ補正・軌跡キャリブで共用）。"""
+def payload_inputs(tool: bool = True):
+    """可搬物・重力方向・工具オフセットの入力欄を置き、モデル設定の辞書を返す関数を返す（キネマ補正・軌跡キャリブ・逐次最適化で共用）。"""
     with ui.row().classes("items-center"):
         payload = [ui.number(label, value=0.0).classes("w-28") for label in ("可搬質量 [kg]", "重心 X [mm]", "重心 Y [mm]", "重心 Z [mm]")]
         gravity = [ui.number(f"重力方向 {axis}", value=value).classes("w-28") for axis, value in zip("XYZ", (0.0, 0.0, -1.0))]
-    tool_offsets = ui.textarea("工具オフセット [mm]（1 行に 1 工具で x, y, z。ToolID=1 が 1 行目）", value="0, 0, 0").classes("w-full")
+    # 逐次最適化では工具オフセットをロボット API から受け取るため、入力欄を置かない
+    tool_offsets = ui.textarea("工具オフセット [mm]（1 行に 1 工具で x, y, z。ToolID=1 が 1 行目）", value="0, 0, 0").classes("w-full") if tool else None
     return lambda: {
         "payload_mass": payload[0].value, "payload_center": [n.value for n in payload[1:]],
         "gravity_direction": [n.value for n in gravity],
-        "tool_offsets": [[float(v) for v in line.split(",")] for line in tool_offsets.value.splitlines() if line.strip()],
+        **({"tool_offsets": [[float(v) for v in line.split(",")] for line in tool_offsets.value.splitlines() if line.strip()]} if tool else {}),
     }
 
 

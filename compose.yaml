@@ -13,6 +13,14 @@ services:
       - "8001:8001"
     restart: unless-stopped
 
+  # ロボット API のシミュレータ（逐次最適化用）。実機を使うときは frontend の ROBOT_URL を実機に向ける
+  robot-sim:
+    build: ./backend
+    command: uvicorn backend.robot_sim:app --host 0.0.0.0 --port 8002
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
   frontend:
     build: ./frontend
     ports:
@@ -20,7 +28,9 @@ services:
     environment:
       DRAW_URL: http://backend:8000
       ANALYSIS_URL: http://analysis:8001
+      ROBOT_URL: http://robot-sim:8002
     depends_on:
       - backend
       - analysis
+      - robot-sim
     restart: unless-stopped

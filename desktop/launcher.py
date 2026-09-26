@@ -1,4 +1,4 @@
-"""Windows exe 用のエントリポイント。描画 API を別スレッド、解析 API を別プロセス、frontend をメインスレッドで起動する。"""
+"""Windows exe 用のエントリポイント。描画 API を別スレッド、解析 API・ロボットシミュレータを別プロセス、frontend をメインスレッドで起動する。"""
 import argparse
 import multiprocessing
 import os
@@ -16,18 +16,25 @@ if __name__ in {"__main__", "__mp_main__"}:
     parser.add_argument("--backend-port", type=int, default=8000)
     parser.add_argument("--analysis-port", type=int, default=8001)
     parser.add_argument("--frontend-port", type=int, default=8080)
+    parser.add_argument("--robot-url", default=None, help="実機のロボット API の URL（指定するとシミュレータを起動しない）")
+    parser.add_argument("--robot-port", type=int, default=8002, help="ロボットシミュレータのポート")
     parser.add_argument("--no-browser", action="store_true", help="ブラウザを自動で開かない")
     args = parser.parse_args()
 
     # frontend が import 時に接続先を読むため、先に設定してからページを登録する
     os.environ["DRAW_URL"] = f"http://127.0.0.1:{args.backend_port}"
     os.environ["ANALYSIS_URL"] = f"http://127.0.0.1:{args.analysis_port}"
+    os.environ["ROBOT_URL"] = args.robot_url or f"http://127.0.0.1:{args.robot_port}"
     import frontend.main  # noqa: F401
     from backend.analysis import serve as serve_analysis
     from backend.draw import app
+    from backend.robot_sim import serve as serve_robot
 
     # 解析 API は学習が重く GIL を占有するため別プロセスで動かし、描画を止めないようにする
     multiprocessing.Process(target=serve_analysis, args=(args.analysis_port,), daemon=True).start()
+    # 実機を指定しないときは、逐次最適化を試せるようロボットシミュレータを起動する
+    if not args.robot_url:
+        multiprocessing.Process(target=serve_robot, args=(args.robot_port,), daemon=True).start()
 
     # 描画 API はバックグラウンドで動かし、frontend の終了と一緒に止まるようにする
     threading.Thread(target=uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=args.backend_port)).run, daemon=True).start()
