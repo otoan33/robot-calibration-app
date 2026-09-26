@@ -1,9 +1,10 @@
 """使い方マニュアル（docs/manual/manual.md）用のスクリーンショットを、ダミーデータで操作しながら docs/manual/img/ に撮る。
 
 アプリの改修後に画面を撮り直すためのスクリプト。アプリを起動した状態で、プロジェクト直下から実行する。
+逐次最適化の画面はロボットシミュレータを使うため、撮影の前にシミュレータを起動し直して初期状態にしておく（docker compose restart robot-sim）。
 ホストに Chromium の依存ライブラリが無くても動くよう、Playwright の公式イメージ内で実行する。
 
-    docker compose up -d --build
+    docker compose up -d --build && docker compose restart robot-sim
     docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work \\
         mcr.microsoft.com/playwright/python:v1.63.0-noble \\
         sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && python scripts/make_manual.py"
@@ -131,6 +132,13 @@ def trajectory_pairs(folder: Path, analysis_url: str) -> list[Path]:
         paths += [write_csv(folder / f"move{motion + 1}_FM.csv", FM_HEADER, fm, pre=[["robot log dummy"], ["sampling 1ms"]], post=[["MAX"], ["MIN"]]),
                   write_csv(folder / f"move{motion + 1}_BT.csv", ["TIMESTAMP", "#X(mm)", "Y(mm)", "Z(mm)"], bt, pre=[["FARO dummy"]])]
     return paths
+
+
+# 逐次最適化の目標軌道（10 ms 刻み 8 秒の FM）。全軸を異なる周期で動かし、始点と終点で止まる
+def target_fm(folder: Path) -> Path:
+    period, amp, center = (8, 4, 5.3, 2.7, 3.1, 6), (40, 15, 20, 30, 20, 60), (0, 20, 10, 0, 50, 0)
+    fm = [[ms, 0.0, 0.0, 0.0] + [c + a * math.sin(2 * math.pi * ms / 1000 / t) * math.sin(math.pi * ms / 8000) for c, a, t in zip(center, amp, period)] for ms in range(0, 8000, 10)]
+    return write_csv(folder / "target_FM.csv", FM_HEADER, fm, pre=[["robot log dummy"], ["sampling 10ms"]], post=[["MAX"], ["MIN"]])
 
 
 # 2 本の工具で姿勢を変えながら同じ点付近を計測したデータ。計測値は真のオフセットを入れたツール補正モデルで作る
@@ -313,13 +321,34 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.run(m.button("学習"))
     m.shot("33_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
 
+
+
+def optimize_page(m: Manual, data: dict):
+    """逐次最適化：設定 → 目標軌道を入れて開始 → 誤差の推移 → 軌跡と誤差の時系列 → パラメータの推移と表 → 履歴の保存。ロボットはシミュレータ（起動直後の状態）を使う。"""
+    page = m.page
+    page.locator(".q-header a", has_text="逐次最適化").click()
+    page.wait_for_url("**/optimize")
+    m.shot("34_opt_settings", m.field("calibration_mode"), m.field("同定パターン"), page.locator(".q-field").filter(has_text=re.compile("目標精度|最大反復|改善率|ゲイン")), top=page.locator(".q-field").first)
+    chips = m.upload(0, [data["target"]])
+    m.shot("35_opt_start", page.locator(".q-uploader"), chips, m.button("開始"), m.button("停止（この反復の後）"), top=page.locator(".q-uploader"))
+    m.run(m.button("開始"))
+    charts = page.locator(".nicegui-echart, .js-plotly-plot")
+    m.shot("36_opt_convergence", charts.nth(0), page.get_by_text("反復済み"), top=page.get_by_text("反復済み"))
+    m.shot("37_opt_trajectory", charts.nth(1), charts.nth(2), top=charts.nth(1))
+    m.shot("38_opt_parameters", charts.nth(3), page.locator(".q-table__container"), top=charts.nth(3))
+    m.shot("39_opt_save", m.button("履歴を保存"), m.button("リセット"), top=page.locator(".q-uploader"))
+
+
+def error_page(m: Manual, data: dict):
     # エラー表示の例：関節補正で BT を入れ忘れた場合
-    page.reload()
+    page = m.page
+    page.locator(".q-header a", has_text="解析").click()
+    page.wait_for_url("**/analysis")
     m.tab("関節補正")
     m.upload(0, [data["joint_before"][0]])
     m.button("学習").click()
     page.locator(".q-notification").wait_for()
-    m.shot("34_error", page.locator(".q-notification"))
+    m.shot("40_error", page.locator(".q-notification"))
 
 
 def main():
@@ -336,7 +365,7 @@ def main():
             "path_before": path_pair(work, "path_before", 0.2), "path_after": path_pair(work, "path_after", 0.05),
             "joint_before": joint_pair(work, "J1_before", 0.004, 0.0015), "joint_after": joint_pair(work, "J1_after", 0.001, 0.0004),
             "faro": faro_csvs(work, args.analysis_url), "toolcalib": toolcalib_csv(work, args.analysis_url),
-            "trajectory": trajectory_pairs(work, args.analysis_url),
+            "trajectory": trajectory_pairs(work, args.analysis_url), "target": target_fm(work),
         }
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 800}, accept_downloads=True)
@@ -346,6 +375,8 @@ def main():
         m = Manual(page)
         draw_page(m, data)
         analysis_page(m, data, work)
+        optimize_page(m, data)
+        error_page(m, data)
         browser.close()
 
 
