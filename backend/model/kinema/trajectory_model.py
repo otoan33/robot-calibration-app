@@ -36,9 +36,10 @@ class TrajectoryCalibModel(KinemaJointModel):
     def save(self) -> dict[str, Any]:
         return {**super().save(), "time_offsets_ms": (self.time_offsets * 1000.0).tolist()}
 
-    # キネマと伝達誤差だけを反映する（座標と時刻ずれはデータごとに fit で推定し直す）
+    # キネマと伝達誤差だけを反映する（座標と時刻ずれはデータごとに fit で推定し直す）。伝達誤差だけのファイルならキネマは公称のまま
     def load(self, parameters: dict[str, Any]) -> None:
-        self._load_robot(parameters.get("robot_model", parameters))
+        if set(parameters) - {"transmission_error"}:
+            self._load_robot(parameters.get("robot_model", parameters))
         self.transmission.load(parameters.get("transmission_error", {}))
 
     # 計測器の座標変換がベースリンクの位置・姿勢（平坦化添字 0〜5）と重複するため、それらは推定しない

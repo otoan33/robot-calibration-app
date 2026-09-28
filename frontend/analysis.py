@@ -14,7 +14,7 @@ CALIBRATION_MODES = {
 }
 # 同定パターン（kinema_only 以外は backend の KinemaJointModel.TRAIN_PATTERNS。伝達誤差は actual のみ）
 TRAIN_PATTERNS = {
-    "kinema_only": "キネマのみ", "trans_j1": "伝達誤差 J1", "trans_all": "伝達誤差 全軸",
+    "kinema_only": "キネマのみ", "kinema_fixed_trans": "キネマ（伝達誤差は読み込んだ値で固定）", "trans_j1": "伝達誤差 J1", "trans_all": "伝達誤差 全軸",
     "kinema_trans_j1": "キネマ＋伝達誤差 J1（同時）", "kinema_trans_all": "キネマ＋伝達誤差 全軸（同時）",
     "kinema_then_trans_j1": "キネマ → 伝達誤差 J1（2 段階）", "kinema_then_trans_all": "キネマ → 伝達誤差 全軸（2 段階）",
 }
@@ -34,6 +34,16 @@ def payload_inputs():
         "gravity_direction": [n.value for n in gravity],
         "tool_offsets": [[float(v) for v in line.split(",")] for line in tool_offsets.value.splitlines() if line.strip()],
     }
+
+
+def merged_params(param_files: dict[str, bytes]) -> dict:
+    """複数のパラメータ JSON を 1 つにまとめる（キネマ・軌跡キャリブの保存ファイル＋関節補正で軸ごとに保存したファイルなど）。"""
+    # キネマを含むファイルを先に読み、関節補正の伝達誤差で同じ軸の値を上書きする
+    merged = {"transmission_error": {}}
+    for values in sorted((json.loads(data) for data in param_files.values()), key=lambda values: set(values) == {"transmission_error"}):
+        merged.update({key: value for key, value in values.items() if key != "transmission_error"})
+        merged["transmission_error"].update(values.get("transmission_error", {}))
+    return merged
 
 
 def transmission_table(transmission_error: dict):
@@ -82,16 +92,16 @@ def kinema_panel():
     async def train():
         joints, _, positions, tool_ids = loaders.load_faro(list(csv_files.values()))
         await api.analysis("/init", init_body())
-        # 伝達誤差だけを同定するときなどに、保存済みのキネマパラメータから始められるようにする
-        if start_from_loaded.value:
-            await api.analysis("/load", json.loads(next(iter(param_files.values()))))
+        # 伝達誤差だけを同定するときなどに保存済みのキネマから始め、伝達誤差を固定するときは読み込んだ値を使う
+        if start_from_loaded.value or pattern.value == "kinema_fixed_trans":
+            await api.analysis("/load", merged_params(param_files))
         await api.analysis("/train", {"X_train": np.column_stack((joints, tool_ids)).tolist(), "y_train": positions.tolist()})
         await show_result()
 
     # 保存済みパラメータで補正した場合の精度を、学習せずに確かめる
     async def load():
         await api.analysis("/init", init_body())
-        await api.analysis("/load", json.loads(next(iter(param_files.values()))))
+        await api.analysis("/load", merged_params(param_files))
         await show_result()
 
     async def save():
@@ -101,9 +111,9 @@ def kinema_panel():
         train_button = ui.button("学習", icon="model_training", on_click=lambda: run_busy(train_button, train))
         save_button = ui.button("パラメータを保存", icon="download", on_click=lambda: run_busy(save_button, save))
     with ui.expansion("保存済みパラメータで評価する").classes("w-full"):
-        file_upload(param_files, "パラメータ JSON")
+        file_upload(param_files, "パラメータ JSON（キネマ補正・軌跡キャリブ・関節補正で保存したもの。複数可）")
         load_button = ui.button("読み込んで評価", on_click=lambda: run_busy(load_button, load))
-        start_from_loaded = ui.checkbox("このパラメータを学習の初期値にする（キネマを固定して伝達誤差だけ同定する場合など）")
+        start_from_loaded = ui.checkbox("このパラメータを学習の初期値にする（キネマを固定して伝達誤差だけ同定する場合など。「伝達誤差は読み込んだ値で固定」では常に読み込む）")
     result = ui.column().classes("w-full")
 
 
@@ -134,8 +144,8 @@ def trajectory_panel():
     async def fit(trajectories: list, X: list, measured: np.ndarray, pattern_value: str, start_from_loaded: bool) -> np.ndarray:
         settings = {"robot_type": robot_type.value, "calibration_mode": calibration_mode.value, "pattern": pattern_value, "trajectories": trajectories, **robot_settings()}
         await api.analysis("/init", {"model_type": "trajectory", "settings": settings})
-        if start_from_loaded:
-            await api.analysis("/load", json.loads(next(iter(param_files.values()))))
+        if start_from_loaded or pattern_value == "kinema_fixed_trans":
+            await api.analysis("/load", merged_params(param_files))
         await api.analysis("/train", {"X_train": X, "y_train": measured.tolist()})
         return measured - np.asarray((await api.analysis("/predict", {"X": X}))["predictions"])
 
@@ -167,7 +177,7 @@ def trajectory_panel():
         train_button = ui.button("学習", icon="model_training", on_click=lambda: run_busy(train_button, train))
         save_button = ui.button("パラメータを保存", icon="download", on_click=lambda: run_busy(save_button, save))
     with ui.expansion("保存済みパラメータを使う").classes("w-full"):
-        file_upload(param_files, "パラメータ JSON（キネマ補正・軌跡キャリブで保存したもの）")
+        file_upload(param_files, "パラメータ JSON（キネマ補正・軌跡キャリブ・関節補正で保存したもの。複数可）")
         start_from_loaded = ui.checkbox("このパラメータを学習の初期値にする（「時刻・座標のみ」と組み合わせると、別の日のデータで評価できる）")
     result = ui.column().classes("w-full")
 
@@ -197,7 +207,8 @@ def joint_panel():
                      rows=[{"period": f"{p:.4f}", "amplitude": f"{a:.6f}", "offset": f"{o:.2f}"} for p, a, o in zip(saved["periods"], saved["amplitudes"], saved["offsets"])])
 
     async def save():
-        download_json(await api.analysis("/save"), f"joint_calib_J{joint_no.value}.json")
+        # キネマ補正・軌跡キャリブで伝達誤差として読み込めるよう、軸名を付けて保存する
+        download_json({"transmission_error": {f"J{joint_no.value}": await api.analysis("/save")}}, f"joint_calib_J{joint_no.value}.json")
 
     with ui.row():
         train_button = ui.button("学習", icon="model_training", on_click=lambda: run_busy(train_button, train))

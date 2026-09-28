@@ -21,6 +21,8 @@ class KinemaJointModel(KinemaModel):
 
     TRAIN_PATTERNS = {
         "kinema_only": [(True, ())],
+        # 伝達誤差は load した値（関節補正で求めたものなど）で固定し、キネマだけを推定する
+        "kinema_fixed_trans": [(True, ())],
         "trans_j1": [(False, (1,))],
         "trans_all": [(False, ALL_JOINTS)],
         "kinema_trans_j1": [(True, (1,))],
@@ -51,9 +53,10 @@ class KinemaJointModel(KinemaModel):
     def save(self) -> dict[str, Any]:
         return {"robot_model": self._save_robot(), "transmission_error": self.transmission.save(), "observation_model": {"type": observation_type(self.observation), "parameters": self.observation.save()}}
 
-    # キネマのみの保存ファイルも読めるよう、伝達誤差はあるときだけ反映する
+    # キネマのみ・伝達誤差のみ（関節補正で保存したもの）の保存ファイルも読めるよう、あるものだけ反映する
     def load(self, parameters: dict[str, Any]) -> None:
-        super().load(parameters)
+        if set(parameters) - {"transmission_error"}:
+            super().load(parameters)
         self.transmission.load(parameters.get("transmission_error", {}))
 
     # 指令角に伝達誤差を加えた実角度で順運動学を解く
