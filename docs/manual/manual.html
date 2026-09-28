@@ -2163,10 +2163,9 @@ section.cover p { color: #52667a; }
 <h2 id="15-%E5%90%8C%E5%AE%9A%E3%83%91%E3%82%BF%E3%83%BC%E3%83%B3%E3%82%92%E9%81%B8%E3%81%B6">15. 同定パターンを選ぶ</h2>
 
 <ul>
-<li><strong>同定パターン</strong> で推定する対象を選ぶ</li>
-<li>「キネマのみ（伝達誤差なし）」：伝達誤差を考慮せずキネマを推定。ideal ではこれのみ</li>
-<li>「キネマ＋伝達誤差 全軸（同時）」：キネマと全軸の伝達誤差（周期は機種で固定、振幅・位相）を同時に推定</li>
-<li>「伝達誤差は関節補正の値で固定」：単軸動作の関節補正の結果を固定してキネマを推定（32〜34）</li>
+<li><strong>同定パターン</strong> で推定する対象を選ぶ（ideal では「キネマのみ」だけ）</li>
+<li>「キネマのみ」は伝達誤差を考えない。「全軸（同時）」は伝達誤差の振幅・位相も推定</li>
+<li>「関節補正の値で固定」は単軸動作の関節補正の結果を使う（32〜34）</li>
 </ul>
 </section>
 </foreignObject><foreignObject width="1280" height="720" data-marpit-advanced-background="pseudo"><section data-paginate="true" data-header="解析ページ｜キネマ補正" data-lang="ja" data-style="section {
