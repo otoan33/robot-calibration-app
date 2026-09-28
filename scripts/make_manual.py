@@ -8,6 +8,7 @@
         mcr.microsoft.com/playwright/python:v1.63.0-noble \\
         sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && python scripts/make_manual.py"
     docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli docs/manual/manual.md -o docs/manual/manual.html
+    docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli docs/manual/manual.md --pdf --allow-local-files -o docs/manual/manual.pdf
 """
 import argparse
 import csv
@@ -89,6 +90,8 @@ def add_errors(analysis_url: str):
     for wave in params["transmission_error"].values():
         wave["amplitudes"] = [rng.uniform(0.001, 0.004) for _ in wave["periods"]]
         wave["offsets"] = [rng.uniform(-180, 180) for _ in wave["periods"]]
+    # J1 は関節補正のダミー（joint_pair の J1_before）と同じ伝達誤差にし、関節補正の結果を固定したキネマ補正が効くようにする
+    params["transmission_error"]["J1"].update(amplitudes=[0.004, 0.0015], offsets=[math.degrees(0.3), math.degrees(1.0)])
     api(analysis_url, "/load", params)
 
 
@@ -305,13 +308,32 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.shot("30_joint_train", m.field("軸"), m.field("減速比"), m.field("maxfev"), chips, m.button("学習"), top=page.get_by_role("tab", name="関節補正"))
     m.run(m.button("学習"))
     m.shot("31_joint_result", page.locator(".q-table__container:visible"))
+    with page.expect_download() as download:
+        m.button("パラメータを保存").click()
+    joint_params = work / download.value.suggested_filename
+    download.value.save_as(joint_params)
+    m.shot("32_joint_save", m.button("パラメータを保存"))
+
+    # 関節補正の伝達誤差を固定してキネマ補正：読み込み直した画面で、パターン・関節補正の JSON を入れて学習 → 結果
+    page.reload()
+    page.locator(".q-textarea:visible textarea").fill(", ".join(f"{v:g}" for v in TOOL_OFFSET))
+    m.upload(0, data["faro"])
+    m.field("同定パターン").click()
+    option = page.get_by_role("option", name="キネマ（伝達誤差は読み込んだ値で固定）")
+    m.shot("33_fixed_trans_pattern", m.field("同定パターン"), option)
+    option.click()
+    page.get_by_text("保存済みパラメータで評価する").click()
+    chips = m.upload(1, [joint_params])
+    m.shot("34_fixed_trans_train", chips, m.button("学習"))
+    m.run(m.button("学習"))
+    m.shot("35_fixed_trans_result", page.locator(".q-img:visible"), page.get_by_text("R² ="), page.locator(".q-table__container:visible"), top=page.locator(".q-img:visible"))
 
     # ツール補正：CSV → 学習 → RMSE と工具オフセットの表
     m.tab("ツール補正")
     chips = m.upload(0, [data["toolcalib"]])
-    m.shot("32_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("36_tool_train", page.locator(".q-uploader:visible"), chips, m.button("学習"), top=page.get_by_role("tab", name="ツール補正"))
     m.run(m.button("学習"))
-    m.shot("33_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
+    m.shot("37_tool_result", page.get_by_text("相対 RMSE"), page.locator(".q-table__container:visible"), top=page.get_by_role("tab", name="ツール補正"))
 
     # エラー表示の例：関節補正で BT を入れ忘れた場合
     page.reload()
@@ -319,7 +341,7 @@ def analysis_page(m: Manual, data: dict, work: Path):
     m.upload(0, [data["joint_before"][0]])
     m.button("学習").click()
     page.locator(".q-notification").wait_for()
-    m.shot("34_error", page.locator(".q-notification"))
+    m.shot("38_error", page.locator(".q-notification"))
 
 
 def main():
