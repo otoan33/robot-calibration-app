@@ -306,13 +306,9 @@ $$
 
 | pattern | 段階（キネマを推定するか, 伝達誤差を推定する関節） |
 |---|---|
-| `kinema_only` | (する, なし) |
-| `trans_j1` | (しない, J1) |
-| `trans_all` | (しない, J1〜J6) |
-| `kinema_trans_j1` | (する, J1) |
+| `kinema_only` | (する, なし)。伝達誤差は 0 のまま |
+| `kinema_fixed_trans` | (する, なし)。伝達誤差は関節補正（単軸動作）で求めた値を読み込んで固定 |
 | `kinema_trans_all` | (する, J1〜J6) |
-| `kinema_then_trans_j1` | (する, なし) → (しない, J1) |
-| `kinema_then_trans_all` | (する, なし) → (しない, J1〜J6) |
 
 「キネマを推定する」段階では、`calibration_mode` のパラメータ（2.2 節）を動かす。「しない」段階では、`none` として固定する。
 

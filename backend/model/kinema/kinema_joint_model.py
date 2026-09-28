@@ -20,15 +20,12 @@ class KinemaJointModel(KinemaModel):
     """
 
     TRAIN_PATTERNS = {
+        # 伝達誤差を考慮せず、キネマだけを推定する
         "kinema_only": [(True, ())],
-        # 伝達誤差は load した値（関節補正で求めたものなど）で固定し、キネマだけを推定する
+        # 伝達誤差は load した値（単軸動作の関節補正で求めたもの）で固定し、キネマだけを推定する
         "kinema_fixed_trans": [(True, ())],
-        "trans_j1": [(False, (1,))],
-        "trans_all": [(False, ALL_JOINTS)],
-        "kinema_trans_j1": [(True, (1,))],
+        # キネマと全軸の伝達誤差を同時に推定する
         "kinema_trans_all": [(True, ALL_JOINTS)],
-        "kinema_then_trans_j1": [(True, ()), (False, (1,))],
-        "kinema_then_trans_all": [(True, ()), (False, ALL_JOINTS)],
     }
 
     def __init__(self, pattern: str = "kinema_trans_all", stages: list[tuple[bool, list[int]]] | None = None, **settings: Any) -> None:

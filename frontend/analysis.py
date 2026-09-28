@@ -14,13 +14,11 @@ CALIBRATION_MODES = {
 }
 # 同定パターン（kinema_only 以外は backend の KinemaJointModel.TRAIN_PATTERNS。伝達誤差は actual のみ）
 TRAIN_PATTERNS = {
-    "kinema_only": "キネマのみ", "kinema_fixed_trans": "キネマ（伝達誤差は読み込んだ値で固定）", "trans_j1": "伝達誤差 J1", "trans_all": "伝達誤差 全軸",
-    "kinema_trans_j1": "キネマ＋伝達誤差 J1（同時）", "kinema_trans_all": "キネマ＋伝達誤差 全軸（同時）",
-    "kinema_then_trans_j1": "キネマ → 伝達誤差 J1（2 段階）", "kinema_then_trans_all": "キネマ → 伝達誤差 全軸（2 段階）",
+    "kinema_only": "キネマのみ（伝達誤差なし）", "kinema_fixed_trans": "キネマ（伝達誤差は関節補正の値で固定）", "kinema_trans_all": "キネマ＋伝達誤差 全軸（同時）",
 }
 
 # 軌跡キャリブの同定パターン（backend の TrajectoryCalibModel.TRAIN_PATTERNS。時刻ずれと計測器の座標はどのパターンでも推定する）
-TRAJECTORY_PATTERNS = {"time_only": "時刻・座標のみ", **TRAIN_PATTERNS}
+TRAJECTORY_PATTERNS = {"time_only": "時刻・座標のみ（保存済みパラメータの評価用）", **TRAIN_PATTERNS}
 
 
 def payload_inputs():
@@ -92,7 +90,7 @@ def kinema_panel():
     async def train():
         joints, _, positions, tool_ids = loaders.load_faro(list(csv_files.values()))
         await api.analysis("/init", init_body())
-        # 伝達誤差だけを同定するときなどに保存済みのキネマから始め、伝達誤差を固定するときは読み込んだ値を使う
+        # 保存済みのキネマから始めるときや、伝達誤差を固定するときは読み込んだ値を使う
         if start_from_loaded.value or pattern.value == "kinema_fixed_trans":
             await api.analysis("/load", merged_params(param_files))
         await api.analysis("/train", {"X_train": np.column_stack((joints, tool_ids)).tolist(), "y_train": positions.tolist()})
@@ -113,7 +111,7 @@ def kinema_panel():
     with ui.expansion("保存済みパラメータで評価する").classes("w-full"):
         file_upload(param_files, "パラメータ JSON（キネマ補正・軌跡キャリブ・関節補正で保存したもの。複数可）")
         load_button = ui.button("読み込んで評価", on_click=lambda: run_busy(load_button, load))
-        start_from_loaded = ui.checkbox("このパラメータを学習の初期値にする（キネマを固定して伝達誤差だけ同定する場合など。「伝達誤差は読み込んだ値で固定」では常に読み込む）")
+        start_from_loaded = ui.checkbox("このパラメータを学習の初期値にする（「伝達誤差は関節補正の値で固定」では常に読み込む）")
     result = ui.column().classes("w-full")
 
 
@@ -145,7 +143,11 @@ def trajectory_panel():
         settings = {"robot_type": robot_type.value, "calibration_mode": calibration_mode.value, "pattern": pattern_value, "trajectories": trajectories, **robot_settings()}
         await api.analysis("/init", {"model_type": "trajectory", "settings": settings})
         if start_from_loaded or pattern_value == "kinema_fixed_trans":
-            await api.analysis("/load", merged_params(param_files))
+            params = merged_params(param_files)
+            # キネマのみでは、読み込んだファイルに伝達誤差があっても考慮しない
+            if pattern_value == "kinema_only":
+                params.pop("transmission_error")
+            await api.analysis("/load", params)
         await api.analysis("/train", {"X_train": X, "y_train": measured.tolist()})
         return measured - np.asarray((await api.analysis("/predict", {"X": X}))["predictions"])
 
