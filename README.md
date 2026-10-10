@@ -67,9 +67,15 @@ FM と BT の組は、ファイル名の末尾（`_FM.csv` / `_BT.csv`）が違�
 
 ## Docker で実行する
 
+初回（または `requirements.txt` を変えたとき）だけイメージをビルドする。
+
 ```bash
 docker compose up -d --build
 ```
+
+`backend/` と `frontend/` はコンテナにバインドマウントしているため、コードの変更にビルドは要らない。描画 API と解析 API は `uvicorn --reload` で保存すると自動で再読み込みされる（解析 API の学習済みモデルは再読み込みで消える）。frontend は `docker compose restart frontend` で反映する。compose.yaml を書き換えたときは `docker compose up -d --no-build --pull never` を実行する。
+
+オフラインでも、`requirements.txt` を変えていなければビルドは通る（`pip install` の層はキャッシュから使われる）。`python:3.12-slim` のメタデータ取得で失敗する場合は、`docker buildx use default` で docker ドライバの builder にするか、`DOCKER_BUILDKIT=0 docker compose build` でレガシービルダーを使う。`requirements.txt` を変えた場合は `pip install` が再実行されるため、オフラインではビルドできない。
 
 - 画面（NiceGUI）: http://localhost:8080
 - 描画 API: http://localhost:8000（ドキュメント: http://localhost:8000/docs）
