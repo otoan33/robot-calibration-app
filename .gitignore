@@ -19,3 +19,6 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Claude Code ローカル設定・作業ツリー
+.claude/

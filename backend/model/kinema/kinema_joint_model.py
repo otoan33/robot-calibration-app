@@ -20,12 +20,12 @@ class KinemaJointModel(KinemaModel):
     """
 
     TRAIN_PATTERNS = {
-        "trans_j1": [(False, (1,))],
-        "trans_all": [(False, ALL_JOINTS)],
-        "kinema_trans_j1": [(True, (1,))],
+        # 伝達誤差を考慮せず、キネマだけを推定する
+        "kinema_only": [(True, ())],
+        # 伝達誤差は load した値（単軸動作の関節補正で求めたもの）で固定し、キネマだけを推定する
+        "kinema_fixed_trans": [(True, ())],
+        # キネマと全軸の伝達誤差を同時に推定する
         "kinema_trans_all": [(True, ALL_JOINTS)],
-        "kinema_then_trans_j1": [(True, ()), (False, (1,))],
-        "kinema_then_trans_all": [(True, ()), (False, ALL_JOINTS)],
     }
 
     def __init__(self, pattern: str = "kinema_trans_all", stages: list[tuple[bool, list[int]]] | None = None, **settings: Any) -> None:
@@ -39,17 +39,21 @@ class KinemaJointModel(KinemaModel):
     # 段階ごとに推定対象を切り替えて、KinemaModel の同時最小二乗を順に行う
     def fit(self, X: Any, y: Any) -> "KinemaJointModel":
         for use_kinema, joints in self.stages:
-            self.kinema.set_calibration_mode(self.kinema_mode if use_kinema else "none")
-            self.transmission.joints = list(joints)
+            self._set_stage(use_kinema, joints)
             super().fit(X, y)
         return self
+
+    def _set_stage(self, use_kinema: bool, joints: list[int] | tuple[int, ...]) -> None:
+        self.kinema.set_calibration_mode(self.kinema_mode if use_kinema else "none")
+        self.transmission.joints = list(joints)
 
     def save(self) -> dict[str, Any]:
         return {"robot_model": self._save_robot(), "transmission_error": self.transmission.save(), "observation_model": {"type": observation_type(self.observation), "parameters": self.observation.save()}}
 
-    # キネマのみの保存ファイルも読めるよう、伝達誤差はあるときだけ反映する
+    # キネマのみ・伝達誤差のみ（関節補正で保存したもの）の保存ファイルも読めるよう、あるものだけ反映する
     def load(self, parameters: dict[str, Any]) -> None:
-        super().load(parameters)
+        if set(parameters) - {"transmission_error"}:
+            super().load(parameters)
         self.transmission.load(parameters.get("transmission_error", {}))
 
     # 指令角に伝達誤差を加えた実角度で順運動学を解く

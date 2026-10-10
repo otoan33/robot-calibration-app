@@ -9,10 +9,23 @@ def read_csv(data: bytes, **kwargs) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(data), **kwargs)
 
 
-# ファイル名の末尾 _FM.csv（ロボット側）と _BT.csv（FARO 側）で組を作る。組は名前順に並べる
+# ファイル名の末尾 _FM.csv（ロボット側）と _BT.csv（FARO 側）で組を作る。組は名前順に並べ、共通部分の名前を付ける
+def named_pairs(files: dict[str, bytes]) -> list[tuple[str, bytes, bytes]]:
+    by_upper = {name.upper(): (name, data) for name, data in files.items()}
+    return [(by_upper[name][0][:-7], by_upper[name][1], by_upper[name[:-7] + "_BT.CSV"][1]) for name in sorted(by_upper) if name.endswith("_FM.CSV") and name[:-7] + "_BT.CSV" in by_upper]
+
+
 def pair_files(files: dict[str, bytes]) -> list[tuple[bytes, bytes]]:
-    by_upper = {name.upper(): data for name, data in files.items()}
-    return [(by_upper[name], by_upper[name[:-7] + "_BT.CSV"]) for name in sorted(by_upper) if name.endswith("_FM.CSV") and name[:-7] + "_BT.CSV" in by_upper]
+    return [(fm, bt) for _, fm, bt in named_pairs(files)]
+
+
+def load_trajectory_pair(fm_data: bytes, bt_data: bytes) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """FM（関節角の軌道）と BT（計測器の手先軌跡）の組から、``(FM 時刻 s, 関節角 (N, 6), BT 時刻 s, 計測 XYZ (M, 3))`` を返す。"""
+    # 読み方は単軸の joint_wave と同じ（FM は 2 行目までがヘッダー前の情報で末尾 2 行が集計行、BT は 1 行目がヘッダー前の情報）
+    fm = read_csv(fm_data, skiprows=2, encoding="shift-jis", low_memory=False).iloc[:-2]
+    bt = read_csv(bt_data, skiprows=1, encoding="shift-jis", low_memory=False)
+    return (fm.iloc[:, 0].to_numpy(dtype=np.float64) / 1000.0, fm[[f"Joint(J{joint})[deg]" for joint in range(1, 7)]].to_numpy(dtype=np.float64),
+            bt["TIMESTAMP"].to_numpy(dtype=np.float64) / 1000.0, bt[["#X(mm)", "Y(mm)", "Z(mm)"]].to_numpy(dtype=np.float64))
 
 
 # 計測座標をロボット座標へ最もよく重なるよう剛体変換する（Kabsch 法）。計測器の設置位置の違いを除いて比較するため

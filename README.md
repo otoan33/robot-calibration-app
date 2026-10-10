@@ -19,7 +19,7 @@ robot-calibration-app/
 ├── frontend/                 # NiceGUI（画面）。描画 API・解析 API を HTTP で呼び出す
 │   ├── main.py               # 起動。/ は /draw へ移動
 │   ├── draw.py               # 描画ページ /draw（姿勢精度・軌跡精度・単軸）
-│   ├── analysis.py           # 解析ページ /analysis（キネマ補正・関節補正・ツール補正）
+│   ├── analysis.py           # 解析ページ /analysis（キネマ補正・軌跡キャリブ・関節補正・ツール補正）
 │   ├── layout.py             # 共通のヘッダー・ファイル選択・グラフ表示
 │   ├── api.py                # 描画 API・解析 API の呼び出し
 │   ├── loaders.py            # 計測 CSV → API の入力形式への変換
@@ -33,7 +33,7 @@ robot-calibration-app/
 │   ├── build-in-container.sh # ビルド用コンテナ内で実行される処理
 │   ├── Dockerfile            # ビルド用イメージ（Wine + Windows 版 Python + NSIS）
 │   └── installer.nsi         # インストーラ定義
-├── docs/manual/              # 使い方マニュアル（Marp のスライドと書き出した HTML、スクリーンショット）
+├── docs/manual/              # 使い方マニュアル（Marp のスライドと書き出した HTML・PDF、スクリーンショット）
 └── scripts/
     └── make_manual.py        # マニュアル用のスクリーンショットをダミーデータで撮る
 ```
@@ -59,6 +59,7 @@ frontend から各 API への接続先は環境変数 `DRAW_URL`（デフォル�
 | | 軌跡精度 | 系列ごとに `*_BT.csv` と `*_FM.csv` の組 |
 | | 単軸 | 系列ごとに `*_FM.csv` と `*_BT.csv` の組（複数区間なら複数組） |
 | 解析 `/analysis` | キネマ補正 | FARO の CSV（J1〜J6、RobotXYZ、MeasureXYZ、ToolID）。同定パターンで関節の伝達誤差（周期は機種 JSON の `TransErrPeriod`）も同時に推定できる。保存したパラメータ JSON で評価・学習の初期値にもできる |
+| | 軌跡キャリブ | 動作ごとに `*_FM.csv`（関節角の軌道）と `*_BT.csv`（計測器の手先軌跡）の組。キネマ・伝達誤差に加え、動作ごとの時刻ずれと計測器の座標も推定する |
 | | 関節補正 | `*_FM.csv` と `*_BT.csv` の組 |
 | | ツール補正 | RobotXYZUVW、MeasureXYZ、ToolID の CSV |
 
@@ -151,7 +152,7 @@ robot-calibration.exe --frontend-port 9080 --backend-port 9000 --analysis-port 9
 
 ## 使い方マニュアル
 
-`docs/manual/manual.md`（Marp 形式のスライド）と、書き出した `docs/manual/manual.html` がある。スクリーンショット（`docs/manual/img/`）は `scripts/make_manual.py` がダミーデータで画面を操作して撮る。画面を改修したら、アプリを起動した状態でプロジェクト直下から次を実行して撮り直す。
+`docs/manual/manual.md`（Marp 形式のスライド）と、書き出した `docs/manual/manual.html`・`docs/manual/manual.pdf` がある。HTML は `img/` の画像を読むので `docs/manual/` フォルダごと、PDF は画像を埋め込んであるので 1 ファイルで配れる。スクリーンショット（`docs/manual/img/`）は `scripts/make_manual.py` がダミーデータで画面を操作して撮る。画面を改修したら、アプリを起動した状態でプロジェクト直下から次を実行して撮り直す。
 
 ```bash
 docker compose up -d --build
@@ -159,8 +160,9 @@ docker compose up -d --build
 docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work \
     mcr.microsoft.com/playwright/python:v1.63.0-noble \
     sh -c "pip install -q --user --break-system-packages playwright==1.63.0 && python scripts/make_manual.py"
-# スライドを HTML に書き出す
+# スライドを HTML と PDF に書き出す（PDF はローカルの画像を埋め込むため --allow-local-files が必要）
 docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli docs/manual/manual.md -o docs/manual/manual.html
+docker run --rm -v "$PWD":/home/marp/app -e MARP_USER="$(id -u):$(id -g)" marpteam/marp-cli docs/manual/manual.md --pdf --allow-local-files -o docs/manual/manual.pdf
 ```
 
 - ダミーデータの一部（キネマ補正・ツール補正）は解析 API のモデルで作るため、実行すると解析 API が保持しているモデルは置き換わる
