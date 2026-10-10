@@ -8,10 +8,12 @@ from .kinema_parameter import KinemaModelParam
 
 
 class IdealKinema:
-    """公称 DH パラメータで順運動学を計算し、各関節の原点角度（と工具オフセット）を補正対象にする。"""
+    """公称 DH パラメータで順運動学を計算し、各関節の原点角度（と腕長・工具オフセット）を補正対象にする。"""
 
     # 旧 KinemaCalib の理想キネマモード。どのモードも DH パラメータの θ オフセット（平坦化添字）を補正する
     CALIBRATION_INDICES_BY_MODE = dict.fromkeys(("local", "origin", "local_tool", "origin_tool", "local_ideal", "origin_ideal"), (3, 7, 11, 15, 19, 23))
+    # *_arm モードは腕長 l2, l3, l4（a2, a3, a4）と l5（d4）も補正する
+    CALIBRATION_INDICES_BY_MODE.update(dict.fromkeys(("local_arm", "origin_arm"), (3, 7, 11, 15, 19, 23, 4, 8, 12, 14)))
     # 工具オフセットも同時に推定するモード
     TOOL_OFFSET_MODES = frozenset(("local_tool", "origin_tool"))
 

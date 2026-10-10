@@ -10,7 +10,7 @@ from .layout import TAB10, download_json, file_upload, header, run_busy, show_pn
 # mode ごとに選べる calibration_mode（backend.model.kinema の IdealKinema / CorrectedKinema と対応）
 CALIBRATION_MODES = {
     "actual": ["all_actual", "kinema_actual", "arm_actual", "origin_actual"],
-    "ideal": ["local", "origin", "local_tool", "origin_tool", "local_ideal", "origin_ideal"],
+    "ideal": ["local", "origin", "local_arm", "origin_arm", "local_tool", "origin_tool", "local_ideal", "origin_ideal"],
 }
 # 同定パターン（kinema_only 以外は backend の KinemaJointModel.TRAIN_PATTERNS。伝達誤差は actual のみ）
 TRAIN_PATTERNS = {

@@ -46,7 +46,7 @@ class KinemaModel(BaseModel):
         self.params.set_payload(payload_mass, payload_center, gravity_direction)
         self.tool_offsets = np.asarray([[0.0, 0.0, 0.0]] if tool_offsets is None else tool_offsets, dtype=np.float64)
 
-        # ideal は公称 DH（原点角度のみ補正）、actual はたわみ補正付きの詳細モデル
+        # ideal は公称 DH（原点角度・腕長を補正）、actual はたわみ補正付きの詳細モデル
         if mode == "ideal":
             self.kinema = IdealKinema(self.params, calibration_mode=calibration_mode or "local", max_nfev=max_nfev)
         else:
